@@ -4,6 +4,7 @@
 --   Endpoint = full HTTPS URL for an OpenAI-compatible /chat/completions endpoint
 --   Model    = provider model ID
 --   ApiKey   = secret API key (server-only; never place this in a LocalScript)
+--   AllowedUserIds = comma-separated Roblox UserIds permitted to call the AI bridge
 -- Enable Game Settings > Security > Allow HTTP Requests.
 
 local HttpService = game:GetService("HttpService")
@@ -40,6 +41,16 @@ local function readConfigValue(name)
 	return nil
 end
 
+local function isAllowedDeveloper(userId)
+	local raw = readConfigValue("AllowedUserIds") or ""
+	for id in raw:gmatch("%d+") do
+		if tonumber(id) == userId then
+			return true
+		end
+	end
+	return false
+end
+
 local function allowRequest(userId)
 	local now = os.clock()
 	local history = requestHistory[userId] or {}
@@ -59,6 +70,9 @@ local function allowRequest(userId)
 end
 
 remote.OnServerInvoke = function(player, prompt, context)
+	if not isAllowedDeveloper(player.UserId) then
+		return false, "This TinyDex AI bridge is restricted to configured developer UserIds."
+	end
 	if typeof(prompt) ~= "string" or typeof(context) ~= "string" then
 		return false, "Invalid request format."
 	end
