@@ -1411,79 +1411,14 @@ local aiOutputPadding = Instance.new("UIPadding", aiOutput)
 aiOutputPadding.PaddingLeft = UDim.new(0, 6)
 aiOutputPadding.PaddingTop = UDim.new(0, 6)
 
-local function makeAIContext(root)
-  if not root then return "" end
-  local lines = {
-    "TinyDex developer inspection context",
-    "Selected path: " .. pathOf(root),
-    "Selected class: " .. root.ClassName,
-    "The following is readable client-visible metadata only. No script Source or hidden server data is included.",
-    "",
-  }
-  local function appendInstance(inst)
-    local chunk = {}
-    pcall(dump, inst, chunk)
-    for _, line in ipairs(chunk) do
-      if #table.concat(lines, "\n") > 14000 then return false end
-      lines[#lines + 1] = line
-    end
-    return true
-  end
-  if not appendInstance(root) then return table.concat(lines, "\n") end
-
-  local descendants = {}
-  pcall(function()
-    for _, inst in ipairs(root:GetDescendants()) do
-      descendants[#descendants + 1] = inst
-      if #descendants >= 35 then break end
-    end
-  end)
-  for _, inst in ipairs(descendants) do
-    if not appendInstance(inst) then
-      lines[#lines + 1] = "[Context shortened to stay within the request limit.]"
-      break
-    end
-  end
-  return string.sub(table.concat(lines, "\n"), 1, 16000)
-end
-
-local aiBusy = false
+-- The one-file client build deliberately does not call private AI endpoints.
+-- PRIMEz AI can be connected later through an authenticated supported service.
 aiAsk.MouseButton1Click:Connect(function()
-  if aiBusy then return end
   if not selected then
-    aiOutput.Text = "Select an Instance in the Explorer first."
+    aiOutput.Text = "Select an Instance in Explorer first."
     return
   end
-  local question = string.sub(aiPrompt.Text, 1, 1200)
-  if question:match("^%s*$") then
-    aiOutput.Text = "Enter a question first."
-    return
-  end
-  local remote = game:GetService("ReplicatedStorage"):FindFirstChild("TinyDexAI")
-  if not remote or not remote:IsA("RemoteFunction") then
-    aiOutput.Text = "PRIMEz AI bridge is not available in this session. The client-only build does not call private provider endpoints or store API keys. Authenticated PRIMEz AI integration is pending."
-    return
-  end
-
-  aiBusy = true
-  aiAsk.Text = "WORKING..."
-  aiOutput.Text = "Preparing selected-instance metadata for the PRIMEz AI bridge..."
-  local context = makeAIContext(selected)
-  task.spawn(function()
-    local called, accepted, answer = pcall(function()
-      return remote:InvokeServer(question, context)
-    end)
-    if not gui.Parent then return end
-    aiBusy = false
-    aiAsk.Text = "ANALYZE SELECTION"
-    if not called then
-      aiOutput.Text = "AI request failed: " .. tostring(accepted)
-    elseif not accepted then
-      aiOutput.Text = tostring(answer or "The AI bridge rejected the request.")
-    else
-      aiOutput.Text = tostring(answer or "The AI provider returned an empty response.")
-    end
-  end)
+  aiOutput.Text = "PRIMEz AI integration is not connected in this one-file client build yet.\n\nTinyDex remains fully usable for local Explorer, properties, attributes, picker and preview inspection. No API key or private endpoint is embedded in this script."
 end)
 
 aiPath.MouseButton1Click:Connect(function()
