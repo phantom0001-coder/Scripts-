@@ -283,7 +283,7 @@ local function gotoTab(n)
   end
   if n == "3D" then safe("view", buildView, selected) end
 end
-for _, n in ipairs({ "Props", "3D", "Term", "PrimeZ" }) do
+for _, n in ipairs({ "Props", "3D", "Term", "AI", "PrimeZ" }) do
   local b = Instance.new("TextButton")
   b.Size = UDim2.new(0, 66, 0, 18)
   b.BackgroundColor3 = Color3.fromRGB(26,26,32)
@@ -1333,6 +1333,153 @@ termIn.FocusLost:Connect(function(enter)
     end
   else
     out("Unknown command. Type help.", C.bad)
+  end
+end)
+
+
+-- TinyDex AI: analyses only the selected Instance and its readable metadata.
+-- The model call is proxied by a server Script; no provider key is stored here.
+local aiPage = pages["AI"]
+local aiPrompt = Instance.new("TextBox")
+aiPrompt.Size = UDim2.new(1, 0, 0, 42)
+aiPrompt.BackgroundColor3 = C.row
+aiPrompt.BorderSizePixel = 0
+aiPrompt.ClearTextOnFocus = false
+aiPrompt.Font = Enum.Font.Gotham
+aiPrompt.TextSize = 11
+aiPrompt.TextColor3 = C.txt
+aiPrompt.PlaceholderColor3 = C.dim
+aiPrompt.PlaceholderText = "Ask about the selected object..."
+aiPrompt.Text = "Explain this object and suggest useful debugging checks."
+aiPrompt.TextWrapped = true
+aiPrompt.TextXAlignment = Enum.TextXAlignment.Left
+aiPrompt.TextYAlignment = Enum.TextYAlignment.Top
+aiPrompt.Parent = aiPage
+Instance.new("UIPadding", aiPrompt).PaddingLeft = UDim.new(0, 6)
+
+local aiAsk = Instance.new("TextButton")
+aiAsk.Size = UDim2.new(0, 128, 0, 24)
+aiAsk.Position = UDim2.fromOffset(0, 48)
+aiAsk.BackgroundColor3 = Color3.fromRGB(45, 66, 105)
+aiAsk.BorderSizePixel = 0
+aiAsk.Font = Enum.Font.GothamBold
+aiAsk.TextSize = 11
+aiAsk.TextColor3 = Color3.new(1, 1, 1)
+aiAsk.Text = "ANALYZE SELECTION"
+aiAsk.Parent = aiPage
+Instance.new("UICorner", aiAsk).CornerRadius = UDim.new(0, 4)
+
+local aiPath = Instance.new("TextButton")
+aiPath.Size = UDim2.new(0, 100, 0, 24)
+aiPath.Position = UDim2.fromOffset(134, 48)
+aiPath.BackgroundColor3 = Color3.fromRGB(37, 37, 47)
+aiPath.BorderSizePixel = 0
+aiPath.Font = Enum.Font.Gotham
+aiPath.TextSize = 11
+aiPath.TextColor3 = C.txt
+aiPath.Text = "SHOW PATH"
+aiPath.Parent = aiPage
+Instance.new("UICorner", aiPath).CornerRadius = UDim.new(0, 4)
+
+local aiOutput = Instance.new("TextBox")
+aiOutput.Size = UDim2.new(1, 0, 1, -82)
+aiOutput.Position = UDim2.fromOffset(0, 78)
+aiOutput.BackgroundColor3 = C.row
+aiOutput.BorderSizePixel = 0
+aiOutput.ClearTextOnFocus = false
+aiOutput.MultiLine = true
+aiOutput.TextEditable = false
+aiOutput.TextWrapped = true
+aiOutput.TextXAlignment = Enum.TextXAlignment.Left
+aiOutput.TextYAlignment = Enum.TextYAlignment.Top
+aiOutput.Font = Enum.Font.Code
+aiOutput.TextSize = 11
+aiOutput.TextColor3 = C.txt
+aiOutput.Text = "Select an Instance in Explorer, then choose ANALYZE SELECTION.\n\nAI access requires the TinyDexAI server bridge in ServerScriptService and an OpenAI-compatible endpoint configured in ServerStorage."
+aiOutput.Parent = aiPage
+Instance.new("UIPadding", aiOutput).PaddingLeft = UDim.new(0, 6)
+Instance.new("UIPadding", aiOutput).PaddingTop = UDim.new(0, 6)
+
+local function makeAIContext(root)
+  if not root then return "" end
+  local lines = {
+    "TinyDex developer inspection context",
+    "Selected path: " .. pathOf(root),
+    "Selected class: " .. root.ClassName,
+    "The following is readable client-visible metadata only. No script Source or hidden server data is included.",
+    "",
+  }
+  local function appendInstance(inst)
+    local chunk = {}
+    pcall(dump, inst, chunk)
+    for _, line in ipairs(chunk) do
+      if #table.concat(lines, "\n") > 14000 then return false end
+      lines[#lines + 1] = line
+    end
+    return true
+  end
+  if not appendInstance(root) then return table.concat(lines, "\n") end
+
+  local descendants = {}
+  pcall(function()
+    for _, inst in ipairs(root:GetDescendants()) do
+      descendants[#descendants + 1] = inst
+      if #descendants >= 35 then break end
+    end
+  end)
+  for _, inst in ipairs(descendants) do
+    if not appendInstance(inst) then
+      lines[#lines + 1] = "[Context shortened to stay within the request limit.]"
+      break
+    end
+  end
+  return string.sub(table.concat(lines, "\n"), 1, 16000)
+end
+
+local aiBusy = false
+aiAsk.MouseButton1Click:Connect(function()
+  if aiBusy then return end
+  if not selected then
+    aiOutput.Text = "Select an Instance in the Explorer first."
+    return
+  end
+  local question = string.sub(aiPrompt.Text, 1, 1200)
+  if question:match("^%s*$") then
+    aiOutput.Text = "Enter a question first."
+    return
+  end
+  local remote = game:GetService("ReplicatedStorage"):FindFirstChild("TinyDexAI")
+  if not remote or not remote:IsA("RemoteFunction") then
+    aiOutput.Text = "TinyDex AI bridge not found.\n\nInstall TinyDexAI.server.lua in ServerScriptService, enable HTTP Requests, and configure the endpoint/model/API key in ServerStorage."
+    return
+  end
+
+  aiBusy = true
+  aiAsk.Text = "WORKING..."
+  aiOutput.Text = "Sending selected-instance metadata to the configured AI endpoint..."
+  local context = makeAIContext(selected)
+  task.spawn(function()
+    local called, accepted, answer = pcall(function()
+      return remote:InvokeServer(question, context)
+    end)
+    if not gui.Parent then return end
+    aiBusy = false
+    aiAsk.Text = "ANALYZE SELECTION"
+    if not called then
+      aiOutput.Text = "AI request failed: " .. tostring(accepted)
+    elseif not accepted then
+      aiOutput.Text = tostring(answer or "The AI bridge rejected the request.")
+    else
+      aiOutput.Text = tostring(answer or "The AI provider returned an empty response.")
+    end
+  end)
+end)
+
+aiPath.MouseButton1Click:Connect(function()
+  if selected then
+    showTextExport("Selected Instance Path", pathOf(selected))
+  else
+    aiOutput.Text = "Select an Instance first."
   end
 end)
 
