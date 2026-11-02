@@ -1,30 +1,11 @@
---[[ Tiny Dex v15 — Dex++ port, no Draggable
-
-  Changes from v14:
-  1. CRITICAL FIX: gotoTab was defined before `selected` and `buildView`
-     existed, so its body compiled them as globals (nil). The 3D tab and
-     world PICK always failed with "view ERR: attempt to call a nil value".
-     The declarations now precede gotoTab.
-  2. Folder format in the tree (Dex++ style, text based):
-     - any row with children shows an expand marker "[+]" (collapsed)
-       or "[-]" (expanded), colored like Dex++'s Expand control;
-     - a right-aligned badge shows the child count, e.g. "12 items",
-       so every node with sub-files / sub-data is identifiable at a glance.
-  3. Property enumeration uses the official Roblox API dump
-     (setup.roblox.com, the same source Dex++ uses) when reachable,
-     with executor getproperties() and the built-in candidate list as
-     fallbacks. READ ONLY detection uses API dump member tags.
-  4. Search inputs are debounced (0.15s), the clipboard export tracks
-     its size with a running counter, and flash messages no longer clear
-     newer identical messages.
-]]
+--[[ TinyDex v17 — refined Dex++ tree renderer, portable LocalScript edition ]]
 
 local plr = game:GetService("Players").LocalPlayer
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local LogService = game:GetService("LogService")
-local setclip = setclipboard or toclipboard or (syn and syn.write_clipboard) or writeclipboard
+local luaSelect = select
 local PRIMEZ = "https://primez-studios.onrender.com/"
 
 local gui = Instance.new("ScreenGui")
@@ -32,8 +13,9 @@ gui.Name = "TinyDex"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 999999
 gui.Enabled = true
-pcall(function() gui.Parent = plr:FindFirstChildOfClass("PlayerGui") or plr:WaitForChild("PlayerGui", 5) end)
-if not gui.Parent then pcall(function() gui.Parent = game:GetService("CoreGui") end) end
+local playerGui = plr:FindFirstChildOfClass("PlayerGui") or plr:WaitForChild("PlayerGui", 10)
+assert(playerGui, "TinyDex must run from a LocalScript with access to PlayerGui")
+gui.Parent = playerGui
 
 local C = {
   bg = Color3.fromRGB(22,22,26), row = Color3.fromRGB(16,16,19), panel = Color3.fromRGB(18,18,22),
@@ -125,13 +107,10 @@ status.TextSize = 11
 status.TextXAlignment = Enum.TextXAlignment.Left
 status.TextColor3 = C.good
 status.Parent = win
-local flashToken = 0
 local function flash(t, c)
-  flashToken = flashToken + 1
-  local my = flashToken
   status.Text = tostring(t)
   status.TextColor3 = c or C.good
-  task.delay(3, function() if flashToken == my then status.Text = "" end end)
+  task.delay(3, function() if status.Text == tostring(t) then status.Text = "" end end)
 end
 local function safe(label, fn, ...)
   local ok, e = pcall(fn, ...)
@@ -140,6 +119,70 @@ local function safe(label, fn, ...)
     warn("[TinyDex] " .. label .. ": " .. tostring(e))
   end
   return ok
+end
+
+-- Standard-Luau export surface: users can select and copy text manually.
+local function showTextExport(title, payload)
+  local overlay = Instance.new("Frame")
+  overlay.Name = "TinyDexExport"
+  overlay.Size = UDim2.fromScale(1, 1)
+  overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+  overlay.BackgroundTransparency = 0.3
+  overlay.ZIndex = 100
+  overlay.Parent = gui
+
+  local panel = Instance.new("Frame")
+  panel.Size = UDim2.new(0.82, 0, 0.78, 0)
+  panel.Position = UDim2.fromScale(0.09, 0.11)
+  panel.BackgroundColor3 = C.panel
+  panel.BorderSizePixel = 0
+  panel.ZIndex = 101
+  panel.Parent = overlay
+  Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 6)
+
+  local heading = Instance.new("TextLabel")
+  heading.Size = UDim2.new(1, -80, 0, 28)
+  heading.Position = UDim2.fromOffset(8, 4)
+  heading.BackgroundTransparency = 1
+  heading.Font = Enum.Font.GothamBold
+  heading.TextSize = 12
+  heading.TextXAlignment = Enum.TextXAlignment.Left
+  heading.TextColor3 = C.txt
+  heading.Text = title .. " — select text, then copy"
+  heading.ZIndex = 102
+  heading.Parent = panel
+
+  local close = Instance.new("TextButton")
+  close.Size = UDim2.fromOffset(28, 24)
+  close.Position = UDim2.new(1, -34, 0, 5)
+  close.BackgroundColor3 = C.row
+  close.TextColor3 = C.bad
+  close.Font = Enum.Font.Code
+  close.Text = "X"
+  close.ZIndex = 102
+  close.Parent = panel
+  close.MouseButton1Click:Connect(function() overlay:Destroy() end)
+
+  local body = Instance.new("TextBox")
+  body.Size = UDim2.new(1, -16, 1, -44)
+  body.Position = UDim2.fromOffset(8, 36)
+  body.BackgroundColor3 = C.row
+  body.BorderSizePixel = 0
+  body.ClearTextOnFocus = false
+  body.MultiLine = true
+  body.TextEditable = true
+  body.TextWrapped = false
+  body.TextXAlignment = Enum.TextXAlignment.Left
+  body.TextYAlignment = Enum.TextYAlignment.Top
+  body.Font = Enum.Font.Code
+  body.TextSize = 11
+  body.TextColor3 = C.txt
+  body.Text = payload
+  body.ZIndex = 102
+  body.Parent = panel
+  body:CaptureFocus()
+  body.CursorPosition = 1
+  body.SelectionStart = #body.Text + 1
 end
 
 local search = Instance.new("TextBox")
@@ -196,13 +239,6 @@ pageArea.Position = UDim2.new(0, 4, 0, 28)
 pageArea.BackgroundTransparency = 1
 pageArea.Parent = right
 
--- Forward declarations. These MUST come before gotoTab: in v14 gotoTab was
--- defined first, so `buildView` and `selected` inside it resolved to globals
--- (nil) and the 3D tab / world picker never built the preview.
-local selected, expanded, vis = nil, {}, {}
-local refreshProps, buildView, render
-local propList, vp -- forward declarations used by diagnostics
-
 local pages, tabBtns = {}, {}
 local function gotoTab(n)
   for k, p in pairs(pages) do p.Visible = (k == n) end
@@ -233,6 +269,8 @@ for _, n in ipairs({ "Props", "3D", "Term", "PrimeZ" }) do
   pages[n] = p
 end
 
+local selected, expanded, vis = nil, {}, {}
+local propList, vp -- forward declarations used by diagnostics
 local selBox = Instance.new("SelectionBox")
 selBox.LineThickness = 0.03
 selBox.Color3 = Color3.fromRGB(0, 170, 255)
@@ -244,54 +282,8 @@ local function pathOf(i)
   return ok and p or "?"
 end
 
--- Roblox API dump (same data source Dex++ uses: setup.roblox.com).
--- Optional and fully pcall-guarded; the candidate list below remains the
--- fallback for environments without HttpGet or without network access.
-local API_PROPERTIES, API_SUPERCLASS, API_READONLY = nil, nil, nil
-task.spawn(function()
-  local hget = game.HttpGet
-  if type(hget) ~= "function" then return end
-  local function fetch(url)
-    local ok, res = pcall(hget, game, url)
-    if ok and type(res) == "string" and #res > 0 then return res end
-    return nil
-  end
-  local raw = fetch("https://setup.roblox.com/version") or fetch("http://setup.roblox.com/version")
-  if not raw then return end
-  local version = raw:gsub("%s", "")
-  local dump = fetch("https://setup.roblox.com/" .. version .. "-API-Dump.json")
-    or fetch("http://setup.roblox.com/" .. version .. "-API-Dump.json")
-  if not dump then return end
-  local okd, api = pcall(function() return HttpService:JSONDecode(dump) end)
-  if not okd or type(api) ~= "table" or type(api.Classes) ~= "table" then return end
-  local props, supers, ros = {}, {}, {}
-  for _, class in ipairs(api.Classes) do
-    if type(class.Name) == "string" then
-      supers[class.Name] = class.Superclass
-      local list, roSet = {}, nil
-      for _, member in ipairs(class.Members or {}) do
-        if member.MemberType == "Property" and type(member.Name) == "string" then
-          list[#list + 1] = member.Name
-          for _, tag in ipairs(member.Tags or {}) do
-            if tag == "ReadOnly" then
-              roSet = roSet or {}
-              roSet[member.Name] = true
-            end
-          end
-        end
-      end
-      props[class.Name] = list
-      if roSet then ros[class.Name] = roSet end
-    end
-  end
-  API_PROPERTIES, API_SUPERCLASS, API_READONLY = props, supers, ros
-  flash("api dump loaded · " .. #props .. " classes", C.dim)
-  safe("props", refreshProps)
-end)
-
--- Fallback property probe list. Roblox Instances are userdata-like objects:
--- `next(instance)` does not enumerate their properties. When the API dump is
--- unavailable, probe this safe, broad list and keep readable ones.
+-- Roblox Instances are userdata-like objects: `next(instance)` does not
+-- enumerate their properties. Probe a safe, broad list and keep readable ones.
 local PROPERTY_CANDIDATES = {
   "Name", "ClassName", "Parent", "Archivable", "AbsolutePosition", "AbsoluteSize",
   "AnchorPoint", "AutomaticSize", "BackgroundColor3", "BackgroundTransparency",
@@ -314,9 +306,9 @@ local PROPERTY_CANDIDATES = {
   "LightColor", "LightDirection", "Brightness", "ClockTime", "GeographicLatitude",
   "FogColor", "FogEnd", "FogStart", "GlobalShadows", "OutdoorAmbient", "TimeOfDay",
   "PlaybackState", "SoundGroup", "EmitterSize", "RollOffMaxDistance", "RollOffMinDistance",
-  "Rate", "Lifetime", "Speed", "SpreadAngle", "Texture", "TextureID",
-  "MeshId", "Animation", "PrimaryAxis", "SecondaryAxis", "Target",
-  "TargetFilter", "CurrentDistance", "Style",
+  "Rate", "Lifetime", "Speed", "SpreadAngle", "Enabled", "Texture", "TextureID",
+  "MeshId", "TextureID", "Animation", "PrimaryAxis", "SecondaryAxis", "Target",
+  "TargetFilter", "CurrentDistance", "Enabled", "Style", "Color3", "TextButton",
 }
 local READ_ONLY_PROPERTIES = {
   ClassName = true, Parent = true, AbsolutePosition = true, AbsoluteSize = true,
@@ -324,18 +316,6 @@ local READ_ONLY_PROPERTIES = {
   PlaybackState = true, UserId = true, AccountAge = true, DisplayName = true,
   CurrentDistance = true,
 }
-local function apiReadOnly(inst, propName)
-  if not API_SUPERCLASS or not API_READONLY then return false end
-  local cls = inst.ClassName
-  local guard = 0
-  while type(cls) == "string" and cls ~= "" and guard < 40 do
-    guard = guard + 1
-    local ro = API_READONLY[cls]
-    if ro and ro[propName] then return true end
-    cls = API_SUPERCLASS[cls]
-  end
-  return false
-end
 local function readableProperties(inst)
   local names, seen = {}, {}
   local function addName(name)
@@ -345,41 +325,10 @@ local function readableProperties(inst)
     if ok then names[#names + 1] = name end
   end
 
-  -- 1) Official Roblox API dump: walk the class chain so inherited
-  --    properties are included (this is the Dex++ data source).
-  if API_PROPERTIES and API_SUPERCLASS then
-    local cls = inst.ClassName
-    local guard = 0
-    while type(cls) == "string" and cls ~= "" and guard < 40 do
-      guard = guard + 1
-      local list = API_PROPERTIES[cls]
-      if list then
-        for _, name in ipairs(list) do addName(name) end
-      end
-      cls = API_SUPERCLASS[cls]
-    end
-  end
-
-  -- 2) Some executor environments expose getproperties(), which can enumerate
-  --    more properties than Roblox's standard Luau API exposes.
-  local getter = getproperties
-  if type(getter) == "function" then
-    local ok, result = pcall(getter, inst)
-    if ok and type(result) == "table" then
-      for k, v in pairs(result) do
-        if type(k) == "string" then
-          addName(k)
-        elseif type(v) == "string" then
-          addName(v)
-        elseif type(v) == "table" and type(v.Name) == "string" then
-          addName(v.Name)
-        end
-      end
-    end
-  end
-
-  -- 3) Standard Roblox fallback: broad, safe list of common properties.
-  --    No property is assigned during copying.
+  -- Standard Roblox Luau does not expose universal property enumeration.
+  -- Use the curated, readable property list below; no executor APIs are probed.
+  -- Standard Roblox fallback: enumerate a broad, safe list of common
+  -- properties. No property is assigned during copying.
   for _, name in ipairs(PROPERTY_CANDIDATES) do addName(name) end
   table.sort(names)
   return names
@@ -432,55 +381,74 @@ end
 
 local copying = false
 local function copy(insts, note)
-  if not setclip then return flash("clipboard unavailable in this environment", C.bad) end
   if copying then return flash("copy already running", C.bad) end
   copying = true
   task.spawn(function()
-    local MAX_CHARS = 1200000 -- prevent giant clipboard payloads from locking the client
+    -- Export each supplied Explorer row AND every descendant beneath it.
+    -- Keep a running size counter (rather than rescanning the output on each
+    -- object) and yield periodically so large trees do not monopolize a frame.
+    local MAX_CHARS = 250000
     local out = {
-      "Tiny Dex — COPY SHOWN EXPORT",
-      "Objects visible in the Explorer at copy time: " .. tostring(#insts),
-      "Properties, attributes, and CollectionService tags are included where readable.",
-      "Property coverage: official Roblox API dump when reachable, executor getproperties() when exposed, otherwise the built-in broad property list.",
-      "Safety limit: export stops before the clipboard payload exceeds about 1.2 million characters.",
+      "Tiny Dex — RECURSIVE TREE EXPORT",
+      "Roots supplied by Explorer: " .. tostring(#insts),
+      "Every reachable descendant is traversed recursively; duplicate instances are emitted once.",
+      "Each object includes its path, class, name, readable properties, attributes, and CollectionService tags where available.",
+      "Property limitation: standard Roblox Luau has no universal property-enumeration API; a curated built-in property list is used.",
+      "Export safety limit: approximately 250,000 characters. If reached, the export reports truncation instead of freezing the client.",
       "",
     }
-    local seen, count, stopped = {}, 0, false
-    local currentSize = 0
-    for _, line in ipairs(out) do currentSize = currentSize + #line + 1 end
-    for _, inst in ipairs(insts) do
+    local size = 0
+    for _, line in ipairs(out) do size = size + #line + 1 end
+    local stack, seen = {}, {}
+    -- Reverse insertion preserves the Explorer's usual forward order in DFS.
+    for i = #insts, 1, -1 do
+      if insts[i] then stack[#stack + 1] = insts[i] end
+    end
+    local count, stopped, failed = 0, false, 0
+    while #stack > 0 do
+      local inst = table.remove(stack)
       if inst and not seen[inst] then
         seen[inst] = true
         local objectOut = {}
         local ok = pcall(dump, inst, objectOut)
         if ok then
           local chunk = table.concat(objectOut, "\n") .. "\n"
-          if currentSize + #chunk > MAX_CHARS then
-            out[#out + 1] = "[TRUNCATED SAFELY] Remaining objects were not copied because the export reached the size limit. Filter the Explorer and copy smaller groups."
+          if size + #chunk > MAX_CHARS then
+            out[#out + 1] = "[TRUNCATED SAFELY] Clipboard size limit reached. Collapse/filter the Explorer and copy smaller subtrees to export the remainder."
             stopped = true
             break
           end
           for _, line in ipairs(objectOut) do out[#out + 1] = line end
-          currentSize = currentSize + #chunk
+          size = size + #chunk
           count = count + 1
         else
-          out[#out + 1] = "[ERROR] Could not dump an object"
+          failed = failed + 1
+          out[#out + 1] = "[ERROR] Could not dump an object at " .. pathOf(inst)
         end
-        -- Yield often so the client can keep rendering/responding during large exports.
+
+        -- Add every child regardless of whether its Explorer row is expanded.
+        local children = {}
+        pcall(function()
+          for _, child in ipairs(inst:GetChildren()) do
+            children[#children + 1] = child
+          end
+        end)
+        for i = #children, 1, -1 do
+          if not seen[children[i]] then stack[#stack + 1] = children[i] end
+        end
+
         if count % 2 == 0 then task.wait() end
       end
     end
+    if failed > 0 then out[#out + 1] = "Objects that could not be fully read: " .. tostring(failed) end
     local payload = table.concat(out, "\n")
-    local ok = pcall(setclip, payload)
     copying = false
-    if ok then
-      flash((note or "copied") .. " · " .. count .. " objects · " .. #payload .. " chars" .. (stopped and " · safely truncated; filter to continue" or ""), C.good)
-    else
-      flash("clipboard failed", C.bad)
-    end
+    showTextExport(note or "Tree export", payload)
+    flash("export ready · " .. count .. " objects · " .. #payload .. " chars" .. (stopped and " · safely truncated" or ""), C.good)
   end)
 end
 
+local refreshProps, buildView, render
 local function selectInst(i)
   selected = i
   safe("selbox", function()
@@ -494,122 +462,208 @@ local function selectInst(i)
 end
 
 function render()
-  for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+  for _, c in ipairs(list:GetChildren()) do
+    if c:IsA("TextButton") then c:Destroy() end
+  end
   vis = {}
   local q = search.Text:lower()
+  local matchBelowCache = {}
+
   local function matches(inst)
-    return q == "" or inst.Name:lower():find(q, 1, true) or inst.ClassName:lower():find(q, 1, true)
+    return q == ""
+      or inst.Name:lower():find(q, 1, true) ~= nil
+      or inst.ClassName:lower():find(q, 1, true) ~= nil
   end
-  local function hasMatchBelow(inst)
-    local ok, kids = pcall(function() return inst:GetChildren() end)
-    if not ok then return false end
-    for _, child in ipairs(kids) do
-      if matches(child) or hasMatchBelow(child) then return true end
-    end
-    return false
-  end
-  local function walk(inst, depth)
+
+  -- Cache each node's children for this render pass. Without this, the
+  -- recursive filter and row builder repeatedly call GetChildren() on the
+  -- same instances, which becomes expensive on large DataModels.
+  local childrenCache = {}
+  local function getChildren(inst)
+    local cached = childrenCache[inst]
+    if cached then return cached end
+
     local kids = {}
-    pcall(function() for _, c in ipairs(inst:GetChildren()) do kids[#kids+1] = c end end)
-    table.sort(kids, function(a,b) return a.Name:lower() < b.Name:lower() end)
-    for _, c in ipairs(kids) do
-      local directMatch = matches(c)
-      local showBranch = q == "" or directMatch or hasMatchBelow(c)
-      if showBranch then
-        vis[#vis+1] = c
-        local childCount = 0
-        pcall(function() childCount = #c:GetChildren() end)
-        local has = childCount > 0
+    local ok = pcall(function()
+      for _, child in ipairs(inst:GetChildren()) do
+        kids[#kids + 1] = child
+      end
+    end)
+    if not ok then
+      childrenCache[inst] = kids
+      return kids
+    end
 
-        local row = Instance.new("TextButton")
-        row.Size = UDim2.new(1, 0, 0, 17)
-        row.BackgroundTransparency = (selected == c) and 0 or 1
-        row.BackgroundColor3 = Color3.fromRGB(40,62,110)
-        row.AutoButtonColor = false
-        row.Text = ""
-        row.Parent = list
+    table.sort(kids, function(a, b)
+      local an, bn = a.Name:lower(), b.Name:lower()
+      if an == bn then return a.ClassName < b.ClassName end
+      return an < bn
+    end)
+    childrenCache[inst] = kids
+    return kids
+  end
 
-        local indent = Instance.new("Frame")
-        indent.Size = UDim2.new(1, -depth * 12, 1, 0)
-        indent.Position = UDim2.new(0, depth * 12, 0, 0)
-        indent.BackgroundTransparency = 1
-        indent.Parent = row
+  local function hasMatchBelow(inst)
+    if matchBelowCache[inst] ~= nil then
+      return matchBelowCache[inst]
+    end
+    local found = false
+    for _, child in ipairs(getChildren(inst)) do
+      if matches(child) or hasMatchBelow(child) then
+        found = true
+        break
+      end
+    end
+    matchBelowCache[inst] = found
+    return found
+  end
 
-        -- Folder format (Dex++ per-entry Expand control, text equivalent):
-        -- "[+]" marks a collapsed node with sub-instances, "[-]" an expanded
-        -- one. Leaves show no marker, so containers are obvious in the tree.
-        local arrow = Instance.new("TextButton")
-        arrow.Size = UDim2.new(0, 26, 1, 0)
-        arrow.Position = UDim2.new(0, -26, 0, 0)
-        arrow.BackgroundTransparency = 1
-        arrow.Font = Enum.Font.Code
-        arrow.TextSize = 11
-        arrow.TextColor3 = has and C.hot or C.dim
-        arrow.Text = ""
-        arrow.Parent = indent
+  local function makeLine(parent, x, y, h, w)
+    local line = Instance.new("Frame")
+    line.BorderSizePixel = 0
+    line.BackgroundColor3 = C.good
+    line.BackgroundTransparency = 0.08
+    line.Position = UDim2.fromOffset(x, y)
+    line.Size = UDim2.fromOffset(w or 1, h)
+    line.Parent = parent
+    return line
+  end
 
-        local name = Instance.new("TextLabel")
-        name.Size = UDim2.new(1, has and -80 or -30, 1, 0)
-        name.Position = UDim2.new(0, 28, 0, 0)
-        name.BackgroundTransparency = 1
-        name.Font = Enum.Font.Code
-        name.TextSize = 12
-        name.TextXAlignment = Enum.TextXAlignment.Left
-        name.TextTruncate = Enum.TextTruncate.AtEnd
-        name.TextColor3 = (selected == c) and Color3.new(1,1,1) or C.txt
-        name.Text = c.Name .. "  [" .. c.ClassName .. "]"
-        if q ~= "" and not directMatch then name.TextColor3 = C.dim end
-        name.Parent = indent
+  -- Each visible row is a node in a real tree. Ancestor guide lines are
+  -- repeated down the rows while that ancestor has following siblings.
+  local function walk(parentInst, depth, ancestorContinues)
+    local sourceKids = getChildren(parentInst)
+    local shownKids = {}
+    for _, child in ipairs(sourceKids) do
+      if q == "" or matches(child) or hasMatchBelow(child) then
+        shownKids[#shownKids + 1] = child
+      end
+    end
 
-        if has then
-          arrow.Text = expanded[c] and "[-]" or "[+]"
-          -- Right-aligned badge: how many sub-instances live under this node.
-          local badge = Instance.new("TextLabel")
-          badge.Size = UDim2.new(0, 48, 1, 0)
-          badge.Position = UDim2.new(1, -50, 0, 0)
-          badge.BackgroundTransparency = 1
-          badge.Font = Enum.Font.Code
-          badge.TextSize = 10
-          badge.TextXAlignment = Enum.TextXAlignment.Right
-          badge.TextTruncate = Enum.TextTruncate.AtEnd
-          badge.TextColor3 = C.dim
-          badge.Text = childCount .. (childCount == 1 and " item" or " items")
-          badge.Parent = indent
+    for index, child in ipairs(shownKids) do
+      local isLast = index == #shownKids
+      local childKids = getChildren(child)
+      local childCount = #childKids
+      local hasChildren = childCount > 0
+      local isOpen = expanded[child] == true or q ~= ""
+      local rowHeight = 18
 
-          arrow.MouseButton1Click:Connect(function()
-            expanded[c] = (not expanded[c]) or nil
-            render()
-          end)
+      vis[#vis + 1] = child
+      local row = Instance.new("TextButton")
+      row.Name = "TreeRow_" .. child.Name
+      row.LayoutOrder = #vis -- explicit ordering keeps recursive rows stable
+      row.Size = UDim2.new(1, 0, 0, rowHeight)
+      row.BackgroundTransparency = (selected == child) and 0 or 1
+      row.BackgroundColor3 = Color3.fromRGB(40, 62, 110)
+      row.AutoButtonColor = false
+      row.Text = ""
+      row.Parent = list
+
+      -- Carry vertical guides from open parent branches through this row.
+      for level, continues in ipairs(ancestorContinues) do
+        if continues then
+          makeLine(row, (level - 1) * 14 + 6, 0, rowHeight, 1)
         end
+      end
 
-        local last = 0
-        row.MouseButton1Click:Connect(function()
-          local now = tick()
-          if now - last < 0.3 and has then
-            expanded[c] = (not expanded[c]) or nil
-            render()
-            last = 0
-            return
-          end
-          last = now
-          selectInst(c)
+      local branchX = depth * 14 + 6
+      makeLine(row, branchX, 0, 9, 1)
+      makeLine(row, branchX, 8, 1, 9)
+      if not isLast then
+        makeLine(row, branchX, 9, 9, 1)
+      end
+
+      local arrow = Instance.new("TextButton")
+      arrow.Size = UDim2.fromOffset(13, 16)
+      arrow.Position = UDim2.fromOffset(depth * 14 + 14, 1)
+      arrow.BackgroundTransparency = 1
+      arrow.Font = Enum.Font.Code
+      arrow.TextSize = 12
+      arrow.TextColor3 = hasChildren and C.good or C.dim
+      arrow.Text = hasChildren and (isOpen and "v" or ">") or " "
+      arrow.AutoButtonColor = false
+      arrow.Parent = row
+      if hasChildren then
+        arrow.MouseButton1Click:Connect(function()
+          expanded[child] = not expanded[child]
+          render()
         end)
-        row.MouseButton2Click:Connect(function()
-          if setclip then pcall(setclip, pathOf(c)); flash("path copied") end
-        end)
-        if expanded[c] or q ~= "" then walk(c, depth + 1) end
+      end
+
+      local icon = Instance.new("TextLabel")
+      icon.Size = UDim2.fromOffset(14, 16)
+      icon.Position = UDim2.fromOffset(depth * 14 + 28, 1)
+      icon.BackgroundTransparency = 1
+      icon.Font = Enum.Font.Code
+      icon.TextSize = 11
+      icon.TextColor3 = hasChildren and C.good or C.hot
+      -- Keep the disclosure arrow separate from the class glyph, as in
+      -- object explorers: the arrow controls branches; the glyph identifies
+      -- the kind of Instance.
+      if child:IsA("Folder") then
+        icon.Text = "▰"
+      elseif child:IsA("Model") then
+        icon.Text = "◩"
+      elseif child:IsA("BasePart") then
+        icon.Text = "◧"
+      elseif child:IsA("LuaSourceContainer") then
+        icon.Text = "◇"
+      else
+        icon.Text = hasChildren and "▣" or "·"
+      end
+      icon.Parent = row
+
+      local name = Instance.new("TextLabel")
+      name.Size = UDim2.new(1, -(depth * 14 + 46), 1, 0)
+      name.Position = UDim2.fromOffset(depth * 14 + 44, 0)
+      name.BackgroundTransparency = 1
+      name.Font = Enum.Font.Code
+      name.TextSize = 12
+      name.TextXAlignment = Enum.TextXAlignment.Left
+      name.TextTruncate = Enum.TextTruncate.AtEnd
+      name.TextColor3 = (selected == child) and Color3.new(1, 1, 1) or C.txt
+      local countText = "  (" .. tostring(childCount)
+        .. (childCount == 1 and " item)" or " items)")
+      name.Text = child.Name .. countText .. "  [" .. child.ClassName .. "]"
+      if q ~= "" and not matches(child) then
+        name.TextColor3 = C.dim
+      end
+      name.Parent = row
+
+      local lastClick = 0
+      row.MouseButton1Click:Connect(function()
+        local now = os.clock()
+        if now - lastClick < 0.30 and hasChildren then
+          expanded[child] = not expanded[child]
+          render()
+          lastClick = 0
+          return
+        end
+        lastClick = now
+        selectInst(child)
+      end)
+      row.MouseButton2Click:Connect(function()
+        showTextExport("Instance path", pathOf(child))
+      end)
+
+      if hasChildren and isOpen then
+        local nextAncestors = {}
+        for level, continues in ipairs(ancestorContinues) do
+          nextAncestors[level] = continues
+        end
+        -- Carry this branch's guide only while this node has following
+        -- siblings. This prevents green rails from continuing past the end
+        -- of a parent branch while preserving each open folder's own guide.
+        nextAncestors[#nextAncestors + 1] = not isLast
+        walk(child, depth + 1, nextAncestors)
       end
     end
   end
-  walk(game, 0)
+
+  walk(game, 0, {})
   flash(#vis .. " shown", C.dim)
 end
--- Debounced search: one rebuild per typing pause instead of one per keystroke.
-local searchDebounce
-search:GetPropertyChangedSignal("Text"):Connect(function()
-  if searchDebounce then pcall(task.cancel, searchDebounce) end
-  searchDebounce = task.delay(0.15, function() searchDebounce = nil; safe("render", render) end)
-end)
+search:GetPropertyChangedSignal("Text"):Connect(function() safe("render", render) end)
 
 local function revealNode(inst)
   local chain = {}
@@ -618,7 +672,7 @@ local function revealNode(inst)
   for _, n in ipairs(chain) do expanded[n] = true end
   render()
   for i, c in ipairs(vis) do
-    if c == inst then list.CanvasPosition = Vector2.new(0, math.max(0, i * 17 - 60)); break end
+    if c == inst then list.CanvasPosition = Vector2.new(0, math.max(0, i * 18 - 60)); break end
   end
 end
 
@@ -702,10 +756,10 @@ pickBtn.MouseButton1Click:Connect(function()
 end)
 
 copyShown.MouseButton1Click:Connect(function()
-  -- Export every object currently represented by a visible Explorer row,
-  -- including the complete readable property/attribute data for each row.
+  -- Copy every Explorer row plus every descendant beneath those rows,
+  -- including children hidden by collapsed folders/tree branches.
   if #vis == 0 then return flash("nothing shown", Color3.fromRGB(230,180,110)) end
-  copy(vis, "COPY SHOWN complete")
+  copy(vis, "COPY TREE complete")
 end)
 
 local function runDiagnostics()
@@ -714,8 +768,8 @@ local function runDiagnostics()
   pcall(function() vpKids = #vp:GetChildren() end)
   pcall(function() camOk = vp.CurrentCamera ~= nil end)
   local sel = selected and (selected.ClassName .. " " .. pathOf(selected)) or "none"
-  local msg = ("rows=%d props=%d sel=%s vpKids=%d cam=%s mouse=%s api=%s")
-    :format(rows, props, sel, vpKids, tostring(camOk), tostring(mouse ~= nil), tostring(API_PROPERTIES ~= nil))
+  local msg = ("rows=%d props=%d sel=%s vpKids=%d cam=%s mouse=%s")
+    :format(rows, props, sel, vpKids, tostring(camOk), tostring(mouse ~= nil))
   flash(msg, C.dim)
   print("[TinyDex DIAG] " .. msg)
 end
@@ -833,8 +887,7 @@ function refreshProps()
     local prop = { name = name, attr = isAttr, target = target }
     -- Never probe writability by assigning the current value: setters can
     -- fire events or have side effects. Attempt the real edit only on request.
-    -- Read-only detection: API dump tags when loaded, else the static table.
-    prop.ro = (not isAttr and (READ_ONLY_PROPERTIES[name] == true or apiReadOnly(target, name))) or t == "Instance"
+    prop.ro = (not isAttr and READ_ONLY_PROPERTIES[name] == true) or t == "Instance"
 
     local row = Instance.new("TextButton")
     row.Size = UDim2.new(1, 0, 0, 17)
@@ -1002,12 +1055,7 @@ function refreshProps()
     end
   end
 end
--- Debounced property filter, same pattern as the tree search.
-local pSearchDebounce
-pSearch:GetPropertyChangedSignal("Text"):Connect(function()
-  if pSearchDebounce then pcall(task.cancel, pSearchDebounce) end
-  pSearchDebounce = task.delay(0.15, function() pSearchDebounce = nil; safe("props", refreshProps) end)
-end)
+pSearch:GetPropertyChangedSignal("Text"):Connect(function() safe("props", refreshProps) end)
 
 -- 3D preview: lightweight part-only clone, bounded model size, lazy rendering.
 local viewPage = pages["3D"]
@@ -1041,6 +1089,7 @@ local lastpos = Vector2.zero
 local vcam, vmodel
 local previewCenter = Vector3.zero
 local previewSize = Vector3.new(4, 4, 4)
+local previewPartCount = 0
 local MAX_PREVIEW_PARTS = 120
 
 local function stopView()
@@ -1114,6 +1163,7 @@ function buildView(item)
       clone.CFrame = CFrame.new(-previewCenter) * source.CFrame
       clone.Parent = vmodel
       firstPart = firstPart or clone
+      previewPartCount += 1
     end
   end
   if not firstPart then
@@ -1173,7 +1223,7 @@ RunService.RenderStepped:Connect(function(dt)
   vcam.CFrame = CFrame.lookAt(cf.Position, center)
 end)
 
--- terminal (Dex++ console: FocusLost -> loadstring(text)())
+-- Local utility console: intentionally does not compile or execute user-provided code.
 local termPage = pages["Term"]
 local termOut = Instance.new("ScrollingFrame")
 termOut.Size = UDim2.new(1, 0, 1, -26)
@@ -1197,11 +1247,7 @@ local function out(msg, col)
   l.TextXAlignment = Enum.TextXAlignment.Left
   l.TextTruncate = Enum.TextTruncate.AtEnd
   l.Parent = termOut
-  -- AutomaticCanvasSize grows after the label is parented; scroll one frame
-  -- later using the final canvas height instead of a magic 9e9 value.
-  task.defer(function()
-    termOut.CanvasPosition = Vector2.new(0, termOut.AbsoluteCanvasSize.Y)
-  end)
+  termOut.CanvasPosition = Vector2.new(0, 9e9)
 end
 LogService.MessageOut:Connect(function(msg, t)
   local col = Color3.fromRGB(204,204,204)
@@ -1230,18 +1276,29 @@ termIn.TextXAlignment = Enum.TextXAlignment.Left
 termIn.Parent = termLine
 Instance.new("UIPadding", termIn).PaddingLeft = UDim.new(0, 6)
 
+termIn.PlaceholderText = "help | refresh | selected | clear"
 termIn.FocusLost:Connect(function(enter)
   local txt = termIn.Text
   if not enter or txt == "" then return end
   termIn.Text = ""
-  out("> " .. txt, Color3.fromRGB(120,120,135))
-  local compiler = loadstring or load
-  if not compiler then return out("[compile] this environment does not support running commands", C.bad) end
-  local f, e = compiler(txt)
-  if not f then return out("[compile] " .. tostring(e), C.bad) end
-  local ok, r = pcall(f)
-  if not ok then out("[error] " .. tostring(r), C.bad)
-  elseif r ~= nil then out(tostring(r)) end
+  local command = txt:lower():match("^%s*(.-)%s*$")
+  out("> " .. command, Color3.fromRGB(120,120,135))
+  if command == "help" then
+    out("Commands: help, refresh, selected, clear")
+    out("This panel is read-only; arbitrary Luau execution is disabled.")
+  elseif command == "refresh" then
+    safe("render", render)
+    safe("props", refreshProps)
+    out("Explorer and properties refreshed.", C.good)
+  elseif command == "selected" then
+    out(selected and (selected.ClassName .. "  " .. pathOf(selected)) or "Nothing selected.")
+  elseif command == "clear" then
+    for _, child in ipairs(termOut:GetChildren()) do
+      if child:IsA("TextLabel") then child:Destroy() end
+    end
+  else
+    out("Unknown command. Type help.", C.bad)
+  end
 end)
 
 -- PrimeZ
@@ -1290,25 +1347,26 @@ local function pzBtn(text, y)
   Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
   return b
 end
-pzBtn("Copy URL", 64).MouseButton1Click:Connect(function()
-  if setclip then pcall(setclip, PRIMEZ); flash("url copied") end
+pzBtn("Show pairing URL", 64).MouseButton1Click:Connect(function()
+  showTextExport("PRIMEz URL", PRIMEZ)
 end)
-pzBtn("Open in browser", 92).MouseButton1Click:Connect(function()
-  if setclip then pcall(setclip, PRIMEZ) end
-  flash("url copied — paste into browser", Color3.fromRGB(230,180,110))
-end)
-task.spawn(function()
-  local req = (syn and syn.request) or (http and http.request) or http_request or request
-  local res
-  if req then local ok, r = pcall(req, { Url = PRIMEZ, Method = "GET" }); if ok then res = r end end
-  if not res then local ok, r = pcall(function() return HttpService:RequestAsync({ Url = PRIMEZ, Method = "GET" }) end); if ok then res = r end end
-  local code = res and (res.StatusCode or res.status)
-  if code then pzS.Text = "reachable · HTTP " .. tostring(code); pzS.TextColor3 = C.good
-  else pzS.Text = "unreachable"; pzS.TextColor3 = C.bad end
-end)
+local pairNote = Instance.new("TextLabel")
+pairNote.Size = UDim2.new(1, -4, 0, 42)
+pairNote.Position = UDim2.fromOffset(0, 94)
+pairNote.BackgroundTransparency = 1
+pairNote.Font = Enum.Font.Code
+pairNote.TextSize = 11
+pairNote.TextWrapped = true
+pairNote.TextXAlignment = Enum.TextXAlignment.Left
+pairNote.TextYAlignment = Enum.TextYAlignment.Top
+pairNote.TextColor3 = C.dim
+pairNote.Text = "Pairing is not connected yet. A server-authenticated PRIMEz pairing endpoint is required; client-side executor HTTP is not used."
+pairNote.Parent = pz
+pzS.Text = "pairing not configured"
+pzS.TextColor3 = C.dim
 
 gotoTab("Props")
 safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
-flash("ready · folders show [+] / [-] and item counts", C.dim)
+flash("ready", C.dim)
