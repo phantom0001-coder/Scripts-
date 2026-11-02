@@ -14,7 +14,7 @@ gui.ResetOnSpawn = false
 gui.DisplayOrder = 999999
 gui.Enabled = true
 local playerGui = plr:FindFirstChildOfClass("PlayerGui") or plr:WaitForChild("PlayerGui", 10)
-assert(playerGui, "TinyDex must run from a LocalScript with access to PlayerGui")
+assert(playerGui, "TinyDex needs a client context with access to LocalPlayer and PlayerGui")
 gui.Parent = playerGui
 
 local C = {
