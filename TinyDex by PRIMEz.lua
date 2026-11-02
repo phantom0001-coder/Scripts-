@@ -58,15 +58,25 @@ local function updateWindowScale()
   )
 end
 
+-- Keep only one active viewport listener when the current camera changes.
+local viewportConnection
 local function bindViewport(camera)
+  if viewportConnection then
+    viewportConnection:Disconnect()
+    viewportConnection = nil
+  end
   if not camera then return end
   updateWindowScale()
-  camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateWindowScale)
+  viewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateWindowScale)
 end
 
 bindViewport(workspace.CurrentCamera)
-workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+local cameraChangedConnection = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
   bindViewport(workspace.CurrentCamera)
+end)
+gui.Destroying:Connect(function()
+  if viewportConnection then viewportConnection:Disconnect() end
+  if cameraChangedConnection then cameraChangedConnection:Disconnect() end
 end)
 
 local bar = Instance.new("Frame")
@@ -1457,7 +1467,7 @@ aiAsk.MouseButton1Click:Connect(function()
 
   aiBusy = true
   aiAsk.Text = "WORKING..."
-  aiOutput.Text = "Sending selected-instance metadata to the configured AI endpoint..."
+  aiOutput.Text = "Preparing selected-instance metadata for the PRIMEz AI bridge..."
   local context = makeAIContext(selected)
   task.spawn(function()
     local called, accepted, answer = pcall(function()
