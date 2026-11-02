@@ -1404,4 +1404,30 @@ gotoTab("Props")
 safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
+-- Keep the Explorer synchronized with ordinary DataModel changes. Debouncing
+-- coalesces bursts (for example, a model with many descendants being inserted).
+local explorerRefreshQueued = false
+local explorerConnections = {}
+
+local function queueExplorerRefresh()
+  if explorerRefreshQueued then return end
+  explorerRefreshQueued = true
+  task.delay(0.15, function()
+    explorerRefreshQueued = false
+    if not gui.Parent then return end
+    safe("live explorer refresh", render)
+    if selected and not selected:IsDescendantOf(game) then
+      selectInst(nil)
+    end
+  end)
+end
+
+explorerConnections[#explorerConnections + 1] = game.DescendantAdded:Connect(queueExplorerRefresh)
+explorerConnections[#explorerConnections + 1] = game.DescendantRemoving:Connect(queueExplorerRefresh)
+gui.Destroying:Connect(function()
+  for _, connection in ipairs(explorerConnections) do
+    pcall(function() connection:Disconnect() end)
+  end
+end)
+
 flash("ready", C.dim)
