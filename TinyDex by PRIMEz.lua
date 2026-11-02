@@ -1409,7 +1409,10 @@ safe("view", buildView, nil)
 local explorerRefreshQueued = false
 local explorerConnections = {}
 
-local function queueExplorerRefresh()
+local function queueExplorerRefresh(changed)
+  -- Ignore TinyDex's own UI mutations, otherwise rendering its rows would
+  -- continuously schedule another Explorer render.
+  if changed and (changed == gui or changed:IsDescendantOf(gui)) then return end
   if explorerRefreshQueued then return end
   explorerRefreshQueued = true
   task.delay(0.15, function()
