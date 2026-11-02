@@ -14,7 +14,7 @@ gui.ResetOnSpawn = false
 gui.DisplayOrder = 999999
 gui.Enabled = true
 local playerGui = plr:FindFirstChildOfClass("PlayerGui") or plr:WaitForChild("PlayerGui", 10)
-assert(playerGui, "TinyDex must run from a LocalScript with access to PlayerGui")
+assert(playerGui, "TinyDex needs a client context with access to LocalPlayer and PlayerGui")
 gui.Parent = playerGui
 
 local C = {
@@ -33,6 +33,51 @@ win.BorderSizePixel = 0
 win.Parent = gui
 Instance.new("UICorner", win).CornerRadius = UDim.new(0, 6)
 Instance.new("UIStroke", win).Color = Color3.fromRGB(58,58,68)
+
+-- Responsive sizing: keep the existing desktop layout, but scale the complete
+-- window down on narrow/mobile screens instead of clipping its fixed-size UI.
+local windowScale = Instance.new("UIScale")
+windowScale.Name = "ResponsiveScale"
+windowScale.Scale = 1
+windowScale.Parent = win
+
+local function updateWindowScale()
+  local camera = workspace.CurrentCamera
+  if not camera then return end
+  local viewport = camera.ViewportSize
+  local fitX = math.max(0.45, (viewport.X - 20) / 790)
+  local fitY = math.max(0.45, (viewport.Y - 20) / 450)
+  windowScale.Scale = math.min(1, fitX, fitY)
+  local scaledWidth = 790 * windowScale.Scale
+  local scaledHeight = 450 * windowScale.Scale
+  local maxX = math.max(8, viewport.X - scaledWidth - 8)
+  local maxY = math.max(8, viewport.Y - scaledHeight - 8)
+  win.Position = UDim2.fromOffset(
+    math.clamp(win.Position.X.Offset, 8, maxX),
+    math.clamp(win.Position.Y.Offset, 8, maxY)
+  )
+end
+
+-- Keep only one active viewport listener when the current camera changes.
+local viewportConnection
+local function bindViewport(camera)
+  if viewportConnection then
+    viewportConnection:Disconnect()
+    viewportConnection = nil
+  end
+  if not camera then return end
+  updateWindowScale()
+  viewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateWindowScale)
+end
+
+bindViewport(workspace.CurrentCamera)
+local cameraChangedConnection = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+  bindViewport(workspace.CurrentCamera)
+end)
+gui.Destroying:Connect(function()
+  if viewportConnection then viewportConnection:Disconnect() end
+  if cameraChangedConnection then cameraChangedConnection:Disconnect() end
+end)
 
 local bar = Instance.new("Frame")
 bar.Size = UDim2.new(1,0,0,26)
@@ -248,7 +293,7 @@ local function gotoTab(n)
   end
   if n == "3D" then safe("view", buildView, selected) end
 end
-for _, n in ipairs({ "Props", "3D", "Term", "PrimeZ" }) do
+for _, n in ipairs({ "Props", "3D", "Term", "AI", "PrimeZ" }) do
   local b = Instance.new("TextButton")
   b.Size = UDim2.new(0, 66, 0, 18)
   b.BackgroundColor3 = Color3.fromRGB(26,26,32)
@@ -1301,6 +1346,89 @@ termIn.FocusLost:Connect(function(enter)
   end
 end)
 
+
+-- TinyDex AI: analyses only the selected Instance and its readable metadata.
+-- The model call is proxied by a server Script; no provider key is stored here.
+local aiPage = pages["AI"]
+local aiPrompt = Instance.new("TextBox")
+aiPrompt.Size = UDim2.new(1, 0, 0, 42)
+aiPrompt.BackgroundColor3 = C.row
+aiPrompt.BorderSizePixel = 0
+aiPrompt.ClearTextOnFocus = false
+aiPrompt.Font = Enum.Font.Gotham
+aiPrompt.TextSize = 11
+aiPrompt.TextColor3 = C.txt
+aiPrompt.PlaceholderColor3 = C.dim
+aiPrompt.PlaceholderText = "Ask about the selected object..."
+aiPrompt.Text = "Explain this object and suggest useful debugging checks."
+aiPrompt.TextWrapped = true
+aiPrompt.TextXAlignment = Enum.TextXAlignment.Left
+aiPrompt.TextYAlignment = Enum.TextYAlignment.Top
+aiPrompt.Parent = aiPage
+Instance.new("UIPadding", aiPrompt).PaddingLeft = UDim.new(0, 6)
+
+local aiAsk = Instance.new("TextButton")
+aiAsk.Size = UDim2.new(0, 128, 0, 24)
+aiAsk.Position = UDim2.fromOffset(0, 48)
+aiAsk.BackgroundColor3 = Color3.fromRGB(45, 66, 105)
+aiAsk.BorderSizePixel = 0
+aiAsk.Font = Enum.Font.GothamBold
+aiAsk.TextSize = 11
+aiAsk.TextColor3 = Color3.new(1, 1, 1)
+aiAsk.Text = "ANALYZE SELECTION"
+aiAsk.Parent = aiPage
+Instance.new("UICorner", aiAsk).CornerRadius = UDim.new(0, 4)
+
+local aiPath = Instance.new("TextButton")
+aiPath.Size = UDim2.new(0, 100, 0, 24)
+aiPath.Position = UDim2.fromOffset(134, 48)
+aiPath.BackgroundColor3 = Color3.fromRGB(37, 37, 47)
+aiPath.BorderSizePixel = 0
+aiPath.Font = Enum.Font.Gotham
+aiPath.TextSize = 11
+aiPath.TextColor3 = C.txt
+aiPath.Text = "SHOW PATH"
+aiPath.Parent = aiPage
+Instance.new("UICorner", aiPath).CornerRadius = UDim.new(0, 4)
+
+local aiOutput = Instance.new("TextBox")
+aiOutput.Size = UDim2.new(1, 0, 1, -82)
+aiOutput.Position = UDim2.fromOffset(0, 78)
+aiOutput.BackgroundColor3 = C.row
+aiOutput.BorderSizePixel = 0
+aiOutput.ClearTextOnFocus = false
+aiOutput.MultiLine = true
+aiOutput.TextEditable = false
+aiOutput.TextWrapped = true
+aiOutput.TextXAlignment = Enum.TextXAlignment.Left
+aiOutput.TextYAlignment = Enum.TextYAlignment.Top
+aiOutput.Font = Enum.Font.Code
+aiOutput.TextSize = 11
+aiOutput.TextColor3 = C.txt
+aiOutput.Text = "Select an Instance in Explorer, then choose ANALYZE SELECTION.\n\nPRIMEz AI is not connected in this client-only build yet. No provider API key is stored in TinyDex."
+aiOutput.Parent = aiPage
+local aiOutputPadding = Instance.new("UIPadding", aiOutput)
+aiOutputPadding.PaddingLeft = UDim.new(0, 6)
+aiOutputPadding.PaddingTop = UDim.new(0, 6)
+
+-- The one-file client build deliberately does not call private AI endpoints.
+-- PRIMEz AI can be connected later through an authenticated supported service.
+aiAsk.MouseButton1Click:Connect(function()
+  if not selected then
+    aiOutput.Text = "Select an Instance in Explorer first."
+    return
+  end
+  aiOutput.Text = "PRIMEz AI integration is not connected in this one-file client build yet.\n\nTinyDex remains fully usable for local Explorer, properties, attributes, picker and preview inspection. No API key or private endpoint is embedded in this script."
+end)
+
+aiPath.MouseButton1Click:Connect(function()
+  if selected then
+    showTextExport("Selected Instance Path", pathOf(selected))
+  else
+    aiOutput.Text = "Select an Instance first."
+  end
+end)
+
 -- PrimeZ
 local pz = pages["PrimeZ"]
 local pzT = Instance.new("TextLabel")
@@ -1369,4 +1497,33 @@ gotoTab("Props")
 safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
+-- Keep the Explorer synchronized with ordinary DataModel changes. Debouncing
+-- coalesces bursts (for example, a model with many descendants being inserted).
+local explorerRefreshQueued = false
+local explorerConnections = {}
+
+local function queueExplorerRefresh(changed)
+  -- Ignore TinyDex's own UI mutations, otherwise rendering its rows would
+  -- continuously schedule another Explorer render.
+  if changed and (changed == gui or changed:IsDescendantOf(gui)) then return end
+  if explorerRefreshQueued then return end
+  explorerRefreshQueued = true
+  task.delay(0.15, function()
+    explorerRefreshQueued = false
+    if not gui.Parent then return end
+    safe("live explorer refresh", render)
+    if selected and not selected:IsDescendantOf(game) then
+      selectInst(nil)
+    end
+  end)
+end
+
+explorerConnections[#explorerConnections + 1] = game.DescendantAdded:Connect(queueExplorerRefresh)
+explorerConnections[#explorerConnections + 1] = game.DescendantRemoving:Connect(queueExplorerRefresh)
+gui.Destroying:Connect(function()
+  for _, connection in ipairs(explorerConnections) do
+    pcall(function() connection:Disconnect() end)
+  end
+end)
+
 flash("ready", C.dim)
