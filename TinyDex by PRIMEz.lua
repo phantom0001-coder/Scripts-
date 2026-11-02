@@ -1397,8 +1397,9 @@ aiOutput.TextSize = 11
 aiOutput.TextColor3 = C.txt
 aiOutput.Text = "Select an Instance in Explorer, then choose ANALYZE SELECTION.\n\nAI access requires the TinyDexAI server bridge in ServerScriptService and an OpenAI-compatible endpoint configured in ServerStorage."
 aiOutput.Parent = aiPage
-Instance.new("UIPadding", aiOutput).PaddingLeft = UDim.new(0, 6)
-Instance.new("UIPadding", aiOutput).PaddingTop = UDim.new(0, 6)
+local aiOutputPadding = Instance.new("UIPadding", aiOutput)
+aiOutputPadding.PaddingLeft = UDim.new(0, 6)
+aiOutputPadding.PaddingTop = UDim.new(0, 6)
 
 local function makeAIContext(root)
   if not root then return "" end
