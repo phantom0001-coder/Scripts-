@@ -34,6 +34,41 @@ win.Parent = gui
 Instance.new("UICorner", win).CornerRadius = UDim.new(0, 6)
 Instance.new("UIStroke", win).Color = Color3.fromRGB(58,58,68)
 
+-- Responsive sizing: keep the existing desktop layout, but scale the complete
+-- window down on narrow/mobile screens instead of clipping its fixed-size UI.
+local windowScale = Instance.new("UIScale")
+windowScale.Name = "ResponsiveScale"
+windowScale.Scale = 1
+windowScale.Parent = win
+
+local function updateWindowScale()
+  local camera = workspace.CurrentCamera
+  if not camera then return end
+  local viewport = camera.ViewportSize
+  local fitX = math.max(0.45, (viewport.X - 20) / 790)
+  local fitY = math.max(0.45, (viewport.Y - 20) / 450)
+  windowScale.Scale = math.min(1, fitX, fitY)
+  local scaledWidth = 790 * windowScale.Scale
+  local scaledHeight = 450 * windowScale.Scale
+  local maxX = math.max(8, viewport.X - scaledWidth - 8)
+  local maxY = math.max(8, viewport.Y - scaledHeight - 8)
+  win.Position = UDim2.fromOffset(
+    math.clamp(win.Position.X.Offset, 8, maxX),
+    math.clamp(win.Position.Y.Offset, 8, maxY)
+  )
+end
+
+local function bindViewport(camera)
+  if not camera then return end
+  updateWindowScale()
+  camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateWindowScale)
+end
+
+bindViewport(workspace.CurrentCamera)
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+  bindViewport(workspace.CurrentCamera)
+end)
+
 local bar = Instance.new("Frame")
 bar.Size = UDim2.new(1,0,0,26)
 bar.BackgroundTransparency = 1
