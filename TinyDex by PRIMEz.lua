@@ -1405,7 +1405,7 @@ aiOutput.TextYAlignment = Enum.TextYAlignment.Top
 aiOutput.Font = Enum.Font.Code
 aiOutput.TextSize = 11
 aiOutput.TextColor3 = C.txt
-aiOutput.Text = "Select an Instance in Explorer, then choose ANALYZE SELECTION.\n\nAI access requires the TinyDexAI server bridge in ServerScriptService and an OpenAI-compatible endpoint configured in ServerStorage."
+aiOutput.Text = "Select an Instance in Explorer, then choose ANALYZE SELECTION.\n\nPRIMEz AI is not connected in this client-only build yet. No provider API key is stored in TinyDex."
 aiOutput.Parent = aiPage
 local aiOutputPadding = Instance.new("UIPadding", aiOutput)
 aiOutputPadding.PaddingLeft = UDim.new(0, 6)
@@ -1461,7 +1461,7 @@ aiAsk.MouseButton1Click:Connect(function()
   end
   local remote = game:GetService("ReplicatedStorage"):FindFirstChild("TinyDexAI")
   if not remote or not remote:IsA("RemoteFunction") then
-    aiOutput.Text = "TinyDex AI bridge not found.\n\nInstall TinyDexAI.server.lua in ServerScriptService, enable HTTP Requests, and configure the endpoint/model/API key in ServerStorage."
+    aiOutput.Text = "PRIMEz AI bridge is not available in this session. The client-only build does not call private provider endpoints or store API keys. Authenticated PRIMEz AI integration is pending."
     return
   end
 
