@@ -1,4 +1,4 @@
---[[ TinyDex v22.2 DELTA — PRIMEz Studios Shared Inspection Index + PULSAR Live Tools (Delta Agentic Edition) ]]
+--[[ TinyDex v22.3 DELTA — PRIMEz Studios Shared Inspection Index + PULSAR Live Tools (Delta Agentic Edition) ]]
 
 -- DELTA BOOT: executors inject before the client finishes loading.
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -1922,7 +1922,7 @@ TINYDEX GUIDE — CURRENT CLIENT
 - Workspace: the WORKSPACE tab is a Luau draft editor. Users can write/paste and clear drafts, and CHECK performs only a basic delimiter/string/comment balance check. It is not a full Luau compiler and does not execute code.
 - Console: the CONSOLE tab is a read-only utility console. Supported commands: help, refresh, selected, path, children, count, clear. `refresh` updates Explorer/properties; `selected` and `path` show the selected instance/path; `children` lists up to 40 direct children; `count` counts visible descendants up to a safety cap; `clear` clears console output. It does not execute arbitrary scripts.
 - Logs: the Console also displays client log messages captured through the available log event. Explain warning/error colors where relevant.
-- PULSAR AI: this tab is a live agent. It reads the game itself through the TOOL CALL protocol below (get_content, get_children, get_descendants, find, get_selection, get_services, get_index) and answers from real data it fetched from the client. A compact root summary is attached to each request; all deeper data is fetched live on demand.
+- PULSAR AI: this tab is a live agent with access to the entire Dex: the game DataModel (get_content, get_children, get_descendants, get_tree, find, get_services, get_index), the user's selection (get_selection), the WORKSPACE draft editor (get_draft), the CONSOLE logs (get_logs), and the Dex's own live status (get_dex_status). It answers from real data it fetched itself. A compact root summary plus the full Workspace folder tree is attached to every request; all other data is fetched live on demand.
 
 HOW TO HELP
 When asked “how do I see Workspace?”, tell the user: use Explorer on the left, find Workspace (or search for it), expand its arrow, then select a child; use INSPECT for properties and PREVIEW for supported visual objects. The WORKSPACE tab is the code-draft editor, not the Roblox game Workspace service.
@@ -1937,19 +1937,26 @@ TOOL_CALL {"id":"c2","tool":"find","args":{"query":"Door","max":20}}
 
 The client executes them and returns TOOL_RESULT <id> (<tool>) blocks as the next message; then continue: call more tools or give the final answer as plain text with NO TOOL_CALL lines.
 
+Attached to every request: a root summary of all services AND the full Workspace folder tree (every folder and instance under Workspace, names and classes). For anything deeper, use tools.
+
 Available tools:
 - get_services {} — all root services of the client DataModel with child counts.
 - get_content {"target":"Workspace"} — one instance in full: class, path, tags, ALL readable properties, all attributes, and direct children. target may be a service name, an instance name, or a path like "Workspace.Spawn".
 - get_children {"target":"ReplicatedStorage","max":100} — direct children with class, path, and their child counts.
-- get_descendants {"target":"Workspace","max":200} — deeper tree listing of paths and classes.
+- get_descendants {"target":"Workspace","max":200} — flat descendant listing of paths and classes.
+- get_tree {"target":"FolderName","maxDepth":4} — indented folder tree of a target (defaults to full depth), so you can walk every folder.
 - find {"query":"coin","class":"Part","max":50} — search instance names and classes across the whole client DataModel.
 - get_selection {} — the user's current Explorer selection, in full.
 - get_index {} — the complete TinyDex inspection index of the entire client-visible DataModel (large; prefer targeted tools first).
+- get_draft {} — the current WORKSPACE draft editor text plus its last CHECK verdict, so you can explain, review, or debug the user's code.
+- get_logs {"max":60} — the most recent CONSOLE log lines captured on the client.
+- get_dex_status {} — the live state of TinyDex itself: active tab, selection, index stats, draft size, log count, player, experience, and runtime.
 
 Rules:
 - Prefer targeted tools over get_index.
-- If a TOOL_RESULT ends with a TRUNCATED notice, refine the query (narrower target, a specific child, or a smaller max) instead of guessing.
+- If a TOOL_RESULT ends with a TRUNCATED notice, refine the query (narrower target, a specific child, a smaller max, or maxDepth) instead of guessing.
 - If a tool returns NOT FOUND, try find or get_services first.
+- When the user says "this", "my code", or refers to something they are looking at in TinyDex, resolve the reference yourself: get_selection for the selected instance, get_draft for code in the WORKSPACE editor, get_logs for console output, get_dex_status for the overall live state. Never answer generically when a tool can fetch the real thing.
 - Tool results are live read-only facts from the user's client. Report them as what you inspected; never claim you modified anything.
 
 ACCESS AND SAFETY LIMITS
@@ -1993,6 +2000,39 @@ local function buildRootSummary()
   pcall(function() roots = game:GetChildren() end)
   for _, r in ipairs(roots) do addRoot(r) end
   return table.concat(lines, "\n")
+end
+
+-- Indented tree of every folder and instance under a target.
+local function buildTree(root, maxDepth, cap)
+  local lines = {}
+  local size = 0
+  local truncated = false
+  lines[#lines + 1] = ("- %s <%s>"):format(tostring(root.Name), tostring(root.ClassName))
+  size = #lines[1] + 1
+  local function walk(inst, depth, prefix)
+    if truncated then return end
+    local ok, children = pcall(function() return inst:GetChildren() end)
+    if not ok or type(children) ~= "table" then return end
+    for i = 1, #children do
+      local c = children[i]
+      if truncated then return end
+      if c ~= gui and not c:IsDescendantOf(gui) then
+        local line = prefix .. ("- %s <%s>"):format(tostring(c.Name), tostring(c.ClassName))
+        lines[#lines + 1] = line
+        size += #line + 1
+        if size > cap then
+          truncated = true
+          lines[#lines + 1] = "...[TREE TRUNCATED at " .. cap .. " chars — use get_tree with maxDepth, or get_children on a specific folder to continue]"
+          return
+        end
+        if not maxDepth or depth < maxDepth then
+          walk(c, depth + 1, prefix .. "  ")
+        end
+      end
+    end
+  end
+  walk(root, 1, "")
+  return table.concat(lines, "\n"), truncated
 end
 
 local function instanceFullDetails(target)
@@ -2089,8 +2129,25 @@ local function toolGetDescendants(args)
     local d = descendants[i]
     out[#out + 1] = ("%d. %s <%s> | %s"):format(i, tostring(d.Name), tostring(d.ClassName), tostring(pathOf(d)))
   end
-  if #descendants > n then out[#out + 1] = ("...TRUNCATED: %d more not shown. Scope down: use get_children on a specific child or search with find."):format(#descendants - n) end
+  if #descendants > n then out[#out + 1] = ("...TRUNCATED: %d more not shown. Scope down: use get_tree/get_children on a specific child or search with find."):format(#descendants - n) end
   return table.concat(out, "\n")
+end
+
+local function toolGetTree(args)
+  local inst, err = resolveToolTarget(args and args.target)
+  if not inst then return err end
+  local maxDepth = tonumber(args and args.maxDepth)
+  if maxDepth and maxDepth < 1 then maxDepth = 1 end
+  local cap = math.floor(tonumber(args and args.cap) or 30000)
+  if cap < 2000 then cap = 2000 end
+  if cap > TOOL_RESULT_CAP then cap = TOOL_RESULT_CAP end
+  local tree, wasTruncated = buildTree(inst, maxDepth, cap)
+  local header = ("TREE of %s%s"):format(
+    tostring(pathOf(inst)),
+    maxDepth and (" (max depth " .. math.floor(maxDepth) .. ")") or " (full depth)"
+  )
+  if wasTruncated then header = header .. " — TRUNCATED: narrow with maxDepth, or query a specific child" end
+  return header .. "\n" .. tree
 end
 
 local function toolFind(args)
@@ -2132,14 +2189,95 @@ local function toolGetIndex()
   return result
 end
 
+local function toolGetDraft()
+  local text = ""
+  pcall(function() text = editor.Text end)
+  if type(text) ~= "string" or text:gsub("%s", "") == "" then
+    return "NO DRAFT: the WORKSPACE editor is empty. Ask the user to paste their code into the WORKSPACE tab first."
+  end
+  local note = ""
+  pcall(function() note = editorNote.Text end)
+  return ("WORKSPACE DRAFT (%d chars):\n%s\nEDITOR CHECK NOTE: %s"):format(#text, toolCap(text, 20000), tostring(note))
+end
+
+local function toolGetLogs(args)
+  local max = math.floor(tonumber(args and args.max) or 60)
+  if max < 1 then max = 1 end
+  if max > 200 then max = 200 end
+  local entries = {}
+  local ok, children = pcall(function() return termOut:GetChildren() end)
+  if ok and type(children) == "table" then
+    for _, child in ipairs(children) do
+      local tOk, text = pcall(function() return child.Text end)
+      if tOk and type(text) == "string" and text ~= "" then
+        entries[#entries + 1] = text
+      end
+    end
+  end
+  if #entries == 0 then
+    return "NO LOGS: the CONSOLE has captured no client log lines yet."
+  end
+  local out = { ("CONSOLE LOGS (showing the last %d of %d captured):"):format(math.min(max, #entries), #entries) }
+  local start = math.max(1, #entries - max + 1)
+  for i = start, #entries do
+    out[#out + 1] = ("%d. %s"):format(i, entries[i])
+  end
+  return toolCap(table.concat(out, "\n"), TOOL_RESULT_CAP)
+end
+
+local function toolGetDexStatus()
+  local out = {}
+  out[#out + 1] = "PRODUCT: PRIMEz Studios TinyDex v22.3 Delta (Agentic Edition)"
+  local execName = "not reported"
+  pcall(function()
+    if type(identify_executor) == "function" then
+      local id = identify_executor()
+      if type(id) == "string" and id ~= "" then execName = id end
+    end
+  end)
+  out[#out + 1] = "EXECUTOR: " .. execName .. (type(gethui) == "function" and " (protected UI container available)" or "")
+  local okName, expName = pcall(function() return game.Name end)
+  out[#out + 1] = "EXPERIENCE: " .. (okName and tostring(expName) or "unknown") .. " | PlaceId: " .. tostring(game.PlaceId)
+  out[#out + 1] = "PLAYER: " .. tostring(plr.Name) .. " | display name: " .. tostring(plr.DisplayName)
+  out[#out + 1] = "RUNTIME: " .. (RunService:IsStudio() and "Studio" or "live client") .. (game:IsLoaded() and ", fully loaded" or ", still loading")
+  local activeTab = "unknown"
+  for k, p in pairs(pages) do
+    local okV, vis = pcall(function() return p.Visible end)
+    if okV and vis then
+      activeTab = tostring(k)
+      break
+    end
+  end
+  out[#out + 1] = "ACTIVE TAB: " .. activeTab
+  out[#out + 1] = "EXPLORER SELECTION: " .. (selected and tostring(pathOf(selected)) or "(none)")
+  out[#out + 1] = "INCLUDE SELECTION TOGGLE: " .. tostring(includeSelection)
+  out[#out + 1] = ("INSPECTION INDEX: %d instances | revision %d | %s"):format(
+    inspectionIndexCount, inspectionIndexRevision,
+    inspectionIndexDirty and "stale, refresh pending" or "current")
+  local draftLen = 0
+  pcall(function() draftLen = #(editor.Text or "") end)
+  out[#out + 1] = "WORKSPACE DRAFT: " .. draftLen .. " chars" .. (draftLen > 0 and " (use get_draft to read it)" or " (empty)")
+  local logCount = 0
+  pcall(function()
+    local okC, children = pcall(function() return termOut:GetChildren() end)
+    if okC and type(children) == "table" then logCount = #children end
+  end)
+  out[#out + 1] = "CONSOLE LOG LINES: " .. logCount .. (logCount > 0 and " (use get_logs to read them)" or "")
+  return table.concat(out, "\n")
+end
+
 local PULSAR_TOOL_REGISTRY = {
   get_services = toolGetServices,
   get_content = toolGetContent,
   get_children = toolGetChildren,
   get_descendants = toolGetDescendants,
+  get_tree = toolGetTree,
   find = toolFind,
   get_selection = toolGetSelection,
   get_index = toolGetIndex,
+  get_draft = toolGetDraft,
+  get_logs = toolGetLogs,
+  get_dex_status = toolGetDexStatus,
 }
 
 local function pulsarExecuteTool(name, args)
@@ -2275,7 +2413,13 @@ local function getSelectionContext(userPrompt)
 
   table.insert(parts, "LIVE ROOT SUMMARY (client DataModel at a glance):")
   table.insert(parts, buildRootSummary())
-  table.insert(parts, "Deeper data is not pre-attached. Fetch it live with the TOOL CALL protocol described above (get_content, get_children, get_descendants, find, get_selection, get_services, get_index).")
+  table.insert(parts, "LIVE WORKSPACE TREE (all folders and instances under Workspace):")
+  local wsOk, wsTree = pcall(function()
+    local ws = game:GetService("Workspace")
+    return (buildTree(ws, nil, 15000))
+  end)
+  table.insert(parts, wsOk and wsTree or "Workspace tree unavailable.")
+  table.insert(parts, "Everything deeper (properties, other services, other trees) is fetched live with the TOOL CALL protocol described above (get_content, get_children, get_descendants, get_tree, find, get_selection, get_services, get_index, get_draft, get_logs, get_dex_status).")
 
   return table.concat(parts, "\n\n")
 end
@@ -2365,7 +2509,7 @@ local function sendPulsar()
         resultParts[#resultParts + 1] = ("TOOL_RESULT %s (%s)\n%s"):format(call.id, call.tool, result)
       end
       resultParts[#resultParts + 1] = "Tool results above are live read-only facts from the client. Continue: emit more TOOL_CALL lines if needed, otherwise give the final answer as plain text with NO TOOL_CALL lines."
-      table.insert(conversation, { role = "user", content = table.concat(resultParts, "\n\n") })
+      table.insert(conversation, { role = "user", content: table.concat(resultParts, "\n\n") })
       while #conversation > 24 do table.remove(conversation, 1) end
     end
     busy = false
@@ -2405,7 +2549,7 @@ clearBtn.MouseButton1Click:Connect(function()
   addChatMessage("PULSAR", "Conversation cleared. The shared inspection index will be refreshed automatically before your next message. Official site: https://primez-studios.onrender.com/")
 end)
 
-addChatMessage("PULSAR", "I'm PULSAR AI — your built-in PRIMEz TinyDex agent. I can read the game live myself: ask me to inspect Workspace, find every Part named Door, read an object's properties, or summarize ReplicatedStorage — I fetch the data directly from your client with my tools. I also know the Explorer, Inspect, Preview, draft editor, and Console. Official PRIMEz site: https://primez-studios.onrender.com/ .")
+addChatMessage("PULSAR", "I'm PULSAR AI — your built-in PRIMEz TinyDex agent. I can read the game live myself: I see the full Workspace folder tree with every request, and I can inspect any instance, find parts by name, walk any folder tree, read your draft code, and check the console logs with my tools. Official PRIMEz site: https://primez-studios.onrender.com/ .")
 refreshPulsarStatus()
 task.spawn(function() pcall(rebuildInspectionIndex) end)
 
