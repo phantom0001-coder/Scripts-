@@ -681,8 +681,7 @@ local function rebuildInspectionIndex()
       end
       if #childParts > 0 then entry[#entry + 1] = "DIRECT CHILDREN: " .. table.concat(childParts, ", ") end
 
-      lines[#lines + 1] = table.concat(entry, "
-")
+      lines[#lines + 1] = table.concat(entry, "\n")
       count += 1
 
       for i = #children, 1, -1 do
@@ -698,10 +697,8 @@ local function rebuildInspectionIndex()
   inspectionIndexCount = count
   inspectionIndexTruncated = false
   inspectionIndexRevision += 1
-  inspectionIndexCache = table.concat(lines, "
-")
-    .. ("
-INDEX SUMMARY: %d instances indexed; revision %d; full complete unconstrained index."):format(
+  inspectionIndexCache = table.concat(lines, "\n")
+    .. ("\nINDEX SUMMARY: %d instances indexed; revision %d; full complete unconstrained index."):format(
       count, inspectionIndexRevision
     )
   inspectionIndexDirty = inspectionIndexEpoch ~= buildEpoch
