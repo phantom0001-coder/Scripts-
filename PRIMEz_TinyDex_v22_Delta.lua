@@ -1,4 +1,4 @@
---[[ TinyDex v22 DELTA — PRIMEz Studios Shared Inspection Index + PULSAR (Delta Executor Edition) ]]
+--[[ TinyDex v22.2 DELTA — PRIMEz Studios Shared Inspection Index + PULSAR Live Tools (Delta Agentic Edition) ]]
 
 -- DELTA BOOT: executors inject before the client finishes loading.
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -1922,15 +1922,35 @@ TINYDEX GUIDE — CURRENT CLIENT
 - Workspace: the WORKSPACE tab is a Luau draft editor. Users can write/paste and clear drafts, and CHECK performs only a basic delimiter/string/comment balance check. It is not a full Luau compiler and does not execute code.
 - Console: the CONSOLE tab is a read-only utility console. Supported commands: help, refresh, selected, path, children, count, clear. `refresh` updates Explorer/properties; `selected` and `path` show the selected instance/path; `children` lists up to 40 direct children; `count` counts visible descendants up to a safety cap; `clear` clears console output. It does not execute arbitrary scripts.
 - Logs: the Console also displays client log messages captured through the available log event. Explain warning/error colors where relevant.
-- PULSAR AI: this tab receives the shared, bounded client-visible inspection index plus freshly read selected-instance details. Explorer refreshes and client hierarchy changes invalidate the index; PULSAR rebuilds it before the next request. The selection toggle controls only selected-instance details, not the shared index.
+- PULSAR AI: this tab is a live agent. It reads the game itself through the TOOL CALL protocol below (get_content, get_children, get_descendants, find, get_selection, get_services, get_index) and answers from real data it fetched from the client. A compact root summary is attached to each request; all deeper data is fetched live on demand.
 
 HOW TO HELP
 When asked “how do I see Workspace?”, tell the user: use Explorer on the left, find Workspace (or search for it), expand its arrow, then select a child; use INSPECT for properties and PREVIEW for supported visual objects. The WORKSPACE tab is the code-draft editor, not the Roblox game Workspace service.
 When asked how to use TinyDex, give short numbered steps: find/search in Explorer, expand/select, inspect properties, preview supported objects, use Workspace to draft/check Luau, use Console commands for read-only diagnostics, and ask PULSAR about the selected object with Include selection ON.
 When explaining a selected object, use the supplied selection context. Clearly distinguish facts from guesses. If no selection context is present, ask the user to select an object and keep Include selection ON.
 
-PULSAR INSPECTION INDEX
-A bounded live index is attached to each request. Use its ITEM, PATH, PROPERTIES, ATTRIBUTES, and DIRECT CHILDREN entries as evidence. The index may be truncated; its summary says whether limits were reached. For deeper detail, ask the user to select the exact instance so the request can include its current readable properties, attributes, and direct children. The index is refreshed after Explorer refreshes and when client-visible descendants are added or removed. A selection change is read fresh at message-send time.
+PULSAR LIVE TOOL PROTOCOL (READ THE GAME YOURSELF)
+You have read-only tools that execute on the user's client and return live results. When you need game data, do not guess and do not ask the user to look for it — fetch it yourself by emitting one or more tool-call lines, one per line, as your entire reply:
+
+TOOL_CALL {"id":"c1","tool":"get_content","args":{"target":"Workspace"}}
+TOOL_CALL {"id":"c2","tool":"find","args":{"query":"Door","max":20}}
+
+The client executes them and returns TOOL_RESULT <id> (<tool>) blocks as the next message; then continue: call more tools or give the final answer as plain text with NO TOOL_CALL lines.
+
+Available tools:
+- get_services {} — all root services of the client DataModel with child counts.
+- get_content {"target":"Workspace"} — one instance in full: class, path, tags, ALL readable properties, all attributes, and direct children. target may be a service name, an instance name, or a path like "Workspace.Spawn".
+- get_children {"target":"ReplicatedStorage","max":100} — direct children with class, path, and their child counts.
+- get_descendants {"target":"Workspace","max":200} — deeper tree listing of paths and classes.
+- find {"query":"coin","class":"Part","max":50} — search instance names and classes across the whole client DataModel.
+- get_selection {} — the user's current Explorer selection, in full.
+- get_index {} — the complete TinyDex inspection index of the entire client-visible DataModel (large; prefer targeted tools first).
+
+Rules:
+- Prefer targeted tools over get_index.
+- If a TOOL_RESULT ends with a TRUNCATED notice, refine the query (narrower target, a specific child, or a smaller max) instead of guessing.
+- If a tool returns NOT FOUND, try find or get_services first.
+- Tool results are live read-only facts from the user's client. Report them as what you inspected; never claim you modified anything.
 
 ACCESS AND SAFETY LIMITS
 You can explain and reason about only information supplied in the request context and the client-visible inspection data. You do not have direct remote control of the user's game, UI, account, or PRIMEz website. Never claim you clicked tabs, changed properties, ran code, accessed server-only data, or inspected hidden/protected internals unless the client explicitly supplies evidence. Do not provide instructions to bypass platform protections or access data the user is not authorized to inspect. For code execution in an experience the user owns, direct them to Roblox Studio's normal development workflow.
@@ -1938,6 +1958,234 @@ You can explain and reason about only information supplied in the request contex
 RESPONSE STYLE
 Answer the actual question first. For feature questions, explain where to click and what the user should see. For errors, diagnose from supplied evidence and ask for the exact error when needed. Avoid generic “please clarify” replies when the TinyDex context already makes the intent clear. Never invent buttons, tabs, endpoints, permissions, or capabilities.
 ]]
+
+
+-- ================= PULSAR LIVE TOOLS (read-only, executed on this client) =================
+local TOOL_VALUE_CAP = 2000
+local TOOL_RESULT_CAP = 40000
+
+local function toolCap(s, cap)
+  s = tostring(s)
+  if #s > cap then
+    return s:sub(1, cap - 30) .. "\n...[TRUNCATED at " .. cap .. " chars]"
+  end
+  return s
+end
+
+local function buildRootSummary()
+  local lines = { "ROOTS (name | class | direct children):" }
+  local seen = {}
+  local function addRoot(r)
+    if r and not seen[r] then
+      seen[r] = true
+      local ok, children = pcall(function() return r:GetChildren() end)
+      lines[#lines + 1] = ("- %s | %s | %d children"):format(
+        tostring(r.Name), tostring(r.ClassName),
+        (ok and type(children) == "table") and #children or 0
+      )
+    end
+  end
+  for _, sName in ipairs(KNOWN_SERVICES) do
+    local ok, s = pcall(function() return game:GetService(sName) end)
+    if ok then addRoot(s) end
+  end
+  local roots = {}
+  pcall(function() roots = game:GetChildren() end)
+  for _, r in ipairs(roots) do addRoot(r) end
+  return table.concat(lines, "\n")
+end
+
+local function instanceFullDetails(target)
+  local out = {}
+  out[#out + 1] = "Name: " .. tostring(target.Name)
+  out[#out + 1] = "Class: " .. tostring(target.ClassName)
+  out[#out + 1] = "Path: " .. tostring(pathOf(target))
+  local tagsOk, tags = pcall(function() return game:GetService("CollectionService"):GetTags(target) end)
+  if tagsOk and type(tags) == "table" and #tags > 0 then
+    out[#out + 1] = "Tags: " .. table.concat(tags, ", ")
+  end
+  out[#out + 1] = "READABLE PROPERTIES:"
+  for _, propertyName in ipairs(readableProperties(target)) do
+    local valueOk, value = pcall(function() return target[propertyName] end)
+    if valueOk then
+      local rOk, rendered = pcall(function() return toolCap(valueToText(value), TOOL_VALUE_CAP) end)
+      if rOk then out[#out + 1] = "  " .. propertyName .. " = " .. rendered end
+    end
+  end
+  local ok, attrs = pcall(function() return target:GetAttributes() end)
+  if ok and type(attrs) == "table" then
+    local keys = {}
+    for key in pairs(attrs) do keys[#keys + 1] = tostring(key) end
+    table.sort(keys)
+    out[#out + 1] = "ATTRIBUTES:"
+    if #keys == 0 then out[#out + 1] = "  (none)" end
+    for _, key in ipairs(keys) do
+      local valueOk, value = pcall(function() return target:GetAttribute(key) end)
+      if valueOk then out[#out + 1] = "  " .. key .. " = " .. toolCap(valueToText(value), TOOL_VALUE_CAP) end
+    end
+  end
+  local childrenOk, children = pcall(function() return target:GetChildren() end)
+  local childCount = (childrenOk and type(children) == "table") and #children or 0
+  out[#out + 1] = "DIRECT CHILDREN (" .. childCount .. "):"
+  if childrenOk and type(children) == "table" then
+    for i = 1, #children do
+      out[#out + 1] = ("  %d. %s <%s>"):format(i, tostring(children[i].Name), tostring(children[i].ClassName))
+    end
+  end
+  return table.concat(out, "\n")
+end
+
+local function resolveToolTarget(target)
+  target = tostring(target or "")
+  if target == "" then return nil, "ERROR: missing 'target' argument" end
+  local inst = resolveTarget(target)
+  if not inst then return nil, "NOT FOUND: " .. target end
+  return inst
+end
+
+local function toolGetServices()
+  return buildRootSummary()
+end
+
+local function toolGetContent(args)
+  local inst, err = resolveToolTarget(args and args.target)
+  if not inst then return err end
+  return instanceFullDetails(inst)
+end
+
+local function toolGetChildren(args)
+  local inst, err = resolveToolTarget(args and args.target)
+  if not inst then return err end
+  local max = math.floor(tonumber(args and args.max) or 100)
+  if max < 1 then max = 1 end
+  if max > 500 then max = 500 end
+  local ok, children = pcall(function() return inst:GetChildren() end)
+  if not ok or type(children) ~= "table" then return "ERROR: children not readable on this instance" end
+  local out = { ("PARENT: %s (%d direct children)"):format(tostring(pathOf(inst)), #children) }
+  local n = math.min(#children, max)
+  for i = 1, n do
+    local c = children[i]
+    local gOk, gc = pcall(function() return c:GetChildren() end)
+    out[#out + 1] = ("%d. %s <%s> | %d children | %s"):format(
+      i, tostring(c.Name), tostring(c.ClassName),
+      (gOk and type(gc) == "table") and #gc or 0, tostring(pathOf(c))
+    )
+  end
+  if #children > n then out[#out + 1] = ("...and %d more (raise 'max' or query a specific child by name)"):format(#children - n) end
+  return table.concat(out, "\n")
+end
+
+local function toolGetDescendants(args)
+  local inst, err = resolveToolTarget(args and args.target)
+  if not inst then return err end
+  local max = math.floor(tonumber(args and args.max) or 200)
+  if max < 1 then max = 1 end
+  if max > 1000 then max = 1000 end
+  local ok, descendants = pcall(function() return inst:GetDescendants() end)
+  if not ok or type(descendants) ~= "table" then return "ERROR: descendants not readable on this instance" end
+  local out = { ("PARENT: %s (%d descendants total)"):format(tostring(pathOf(inst)), #descendants) }
+  local n = math.min(#descendants, max)
+  for i = 1, n do
+    local d = descendants[i]
+    out[#out + 1] = ("%d. %s <%s> | %s"):format(i, tostring(d.Name), tostring(d.ClassName), tostring(pathOf(d)))
+  end
+  if #descendants > n then out[#out + 1] = ("...TRUNCATED: %d more not shown. Scope down: use get_children on a specific child or search with find."):format(#descendants - n) end
+  return table.concat(out, "\n")
+end
+
+local function toolFind(args)
+  local query = tostring((args and (args.query or args.target)) or "")
+  if query == "" then return "ERROR: find requires a 'query' argument" end
+  local classFilter = (args and args.class) and tostring(args.class):lower() or nil
+  local max = math.floor(tonumber(args and args.max) or 50)
+  if max < 1 then max = 1 end
+  if max > 200 then max = 200 end
+  local ok, descendants = pcall(function() return game:GetDescendants() end)
+  if not ok or type(descendants) ~= "table" then return "ERROR: could not enumerate the client DataModel" end
+  local out, n = {}, 0
+  local lowerQuery = query:lower()
+  for _, inst in ipairs(descendants) do
+    if n >= max then break end
+    if inst ~= gui and not inst:IsDescendantOf(gui) then
+      local name = tostring(inst.Name):lower()
+      local cls = tostring(inst.ClassName):lower()
+      if (name:find(lowerQuery, 1, true) or cls:find(lowerQuery, 1, true))
+        and (not classFilter or cls:find(classFilter, 1, true)) then
+        n += 1
+        out[#out + 1] = ("%d. %s <%s> | %s"):format(n, tostring(inst.Name), tostring(inst.ClassName), tostring(pathOf(inst)))
+      end
+    end
+  end
+  if n == 0 then return "NOT FOUND: no client-visible instance matches '" .. query .. "'" end
+  out[#out + 1] = ("Showing %d match(es) (result cap %d). Use get_content on any of them for full detail."):format(n, max)
+  return table.concat(out, "\n")
+end
+
+local function toolGetSelection()
+  if not selected then return "NO SELECTION: nothing is selected in the Explorer right now." end
+  return "CURRENT EXPLORER SELECTION:\n" .. instanceFullDetails(selected)
+end
+
+local function toolGetIndex()
+  local ok, result = pcall(rebuildInspectionIndex)
+  if not ok then return "ERROR: inspection index build failed: " .. tostring(result) end
+  return result
+end
+
+local PULSAR_TOOL_REGISTRY = {
+  get_services = toolGetServices,
+  get_content = toolGetContent,
+  get_children = toolGetChildren,
+  get_descendants = toolGetDescendants,
+  find = toolFind,
+  get_selection = toolGetSelection,
+  get_index = toolGetIndex,
+}
+
+local function pulsarExecuteTool(name, args)
+  local fn = PULSAR_TOOL_REGISTRY[name]
+  if not fn then
+    local names = {}
+    for k in pairs(PULSAR_TOOL_REGISTRY) do names[#names + 1] = k end
+    table.sort(names)
+    return "ERROR: unknown tool '" .. tostring(name) .. "'. Available tools: " .. table.concat(names, ", ")
+  end
+  local ok, result = pcall(fn, args or {})
+  if not ok then return "ERROR: tool '" .. tostring(name) .. "' failed: " .. tostring(result) end
+  if type(result) ~= "string" then result = tostring(result) end
+  if #result > TOOL_RESULT_CAP then
+    result = result:sub(1, TOOL_RESULT_CAP - 80)
+      .. "\n...[RESULT TRUNCATED at " .. TOOL_RESULT_CAP .. " chars — narrow the query or target a specific child]"
+  end
+  return result
+end
+
+local function parseToolCalls(reply)
+  local calls = {}
+  if type(reply) ~= "string" then return calls end
+  for line in reply:gmatch("[^\r\n]+") do
+    local payload = line:match("^%s*TOOL_CALL%s*(%b{})")
+    if payload then
+      local ok, decoded = pcall(function() return HttpService:JSONDecode(payload) end)
+      if ok and type(decoded) == "table" and type(decoded.tool) == "string" then
+        calls[#calls + 1] = {
+          id = tostring(decoded.id or ("c" .. #calls + 1)),
+          tool = decoded.tool,
+          args = decoded.args or {},
+        }
+      end
+    end
+  end
+  return calls
+end
+
+local function stripToolCallLines(reply)
+  local kept = {}
+  for line in reply:gmatch("[^\r\n]*") do
+    if not line:match("^%s*TOOL_CALL%s") then kept[#kept + 1] = line end
+  end
+  return table.concat(kept, "\n")
+end
 
 local function getSelectionContext(userPrompt)
   local parts = {
@@ -2025,11 +2273,9 @@ local function getSelectionContext(userPrompt)
     end
   end
 
-  table.insert(parts, "LIVE TINYDEX FULL INSPECTION INDEX (FULL DATA MODEL):")
-  table.insert(parts, rebuildInspectionIndex())
-  table.insert(parts, ("INDEX METADATA: %d indexed instances; revision %d; full complete unconstrained index."):format(
-    inspectionIndexCount, inspectionIndexRevision
-  ))
+  table.insert(parts, "LIVE ROOT SUMMARY (client DataModel at a glance):")
+  table.insert(parts, buildRootSummary())
+  table.insert(parts, "Deeper data is not pre-attached. Fetch it live with the TOOL CALL protocol described above (get_content, get_children, get_descendants, find, get_selection, get_services, get_index).")
 
   return table.concat(parts, "\n\n")
 end
@@ -2074,26 +2320,53 @@ local function sendPulsar()
       sendBtn.AutoButtonColor = true
       return
     end
-    local ok, raw = pcall(pulsarRequest, "POST", PRIMEZ .. "api/ai/chat", {
-      messages = conversation,
-      stream = false,
-      context = "PRIMEz TINYDEX PRODUCT KNOWLEDGE + CURRENT CLIENT CONTEXT\n" .. context,
-    })
-    if ok then
+    -- Agentic loop: PULSAR may request live data with TOOL_CALL lines; the client
+    -- executes the read-only tools here and feeds TOOL_RESULT blocks back until
+    -- the model produces a final plain-text answer (or the round cap is reached).
+    local MAX_TOOL_ROUNDS = 6
+    local round = 0
+    while true do
+      local ok, raw = pcall(pulsarRequest, "POST", PRIMEZ .. "api/ai/chat", {
+        messages = conversation,
+        stream = false,
+        context = "PRIMEz TINYDEX PRODUCT KNOWLEDGE + CURRENT CLIENT CONTEXT\n" .. context,
+      })
+      if not ok then
+        addChatMessage("CONNECTION ERROR", tostring(raw), true)
+        pzStatus.Text = "● Request failed"
+        pzStatus.TextColor3 = C.bad
+        break
+      end
       local decodedOk, data = pcall(function() return HttpService:JSONDecode(raw) end)
-      if decodedOk and data and data.success and type(data.reply) == "string" then
-        table.insert(conversation, { role = "assistant", content = data.reply })
-        while #conversation > 12 do table.remove(conversation, 1) end
-        addChatMessage("PULSAR", data.reply)
+      if not (decodedOk and data and data.success and type(data.reply) == "string") then
+        addChatMessage("CONNECTION ERROR", (decodedOk and data and data.error) or "Invalid response from PRIMEz AI.", true)
+        break
+      end
+      local reply = data.reply
+      local calls = parseToolCalls(reply)
+      if #calls == 0 or round >= MAX_TOOL_ROUNDS then
+        local finalReply = stripToolCallLines(reply)
+        if finalReply:gsub("%s", "") == "" then
+          finalReply = "I inspected the game but reached the tool round limit before composing an answer. Please re-ask; I will use fewer, more targeted tool calls."
+        end
+        table.insert(conversation, { role = "assistant", content = finalReply })
+        while #conversation > 24 do table.remove(conversation, 1) end
+        addChatMessage("PULSAR", finalReply)
         pzStatus.Text = "● PULSAR ONLINE"
         pzStatus.TextColor3 = C.good
-      else
-        addChatMessage("CONNECTION ERROR", (decodedOk and data and data.error) or "Invalid response from PRIMEz AI.", true)
+        break
       end
-    else
-      addChatMessage("CONNECTION ERROR", tostring(raw), true)
-      pzStatus.Text = "● Request failed"
-      pzStatus.TextColor3 = C.bad
+      table.insert(conversation, { role = "assistant", content = reply })
+      round += 1
+      local resultParts = {}
+      for _, call in ipairs(calls) do
+        flash(("PULSAR TOOL · %s"):format(call.tool), C.hot)
+        local result = pulsarExecuteTool(call.tool, call.args)
+        resultParts[#resultParts + 1] = ("TOOL_RESULT %s (%s)\n%s"):format(call.id, call.tool, result)
+      end
+      resultParts[#resultParts + 1] = "Tool results above are live read-only facts from the client. Continue: emit more TOOL_CALL lines if needed, otherwise give the final answer as plain text with NO TOOL_CALL lines."
+      table.insert(conversation, { role = "user", content = table.concat(resultParts, "\n\n") })
+      while #conversation > 24 do table.remove(conversation, 1) end
     end
     busy = false
     sendBtn.Text = "SEND"
@@ -2132,7 +2405,7 @@ clearBtn.MouseButton1Click:Connect(function()
   addChatMessage("PULSAR", "Conversation cleared. The shared inspection index will be refreshed automatically before your next message. Official site: https://primez-studios.onrender.com/")
 end)
 
-addChatMessage("PULSAR", "I'm PULSAR AI — your built-in PRIMEz TinyDex guide. I know the Explorer, Inspect, Preview, Workspace draft editor, Console commands, and how to use the selected-instance context. Ask me how to use TinyDex, how to find Workspace, what an instance does, or how PRIMEz fits together. Official PRIMEz site: https://primez-studios.onrender.com/ .")
+addChatMessage("PULSAR", "I'm PULSAR AI — your built-in PRIMEz TinyDex agent. I can read the game live myself: ask me to inspect Workspace, find every Part named Door, read an object's properties, or summarize ReplicatedStorage — I fetch the data directly from your client with my tools. I also know the Explorer, Inspect, Preview, draft editor, and Console. Official PRIMEz site: https://primez-studios.onrender.com/ .")
 refreshPulsarStatus()
 task.spawn(function() pcall(rebuildInspectionIndex) end)
 
