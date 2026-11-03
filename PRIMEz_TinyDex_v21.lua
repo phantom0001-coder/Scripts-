@@ -1,4 +1,4 @@
---[[ TinyDex v21 — PRIMEz Studios Shared Inspection Index + PULSAR ]]
+--[[ TinyDex v22 — PRIMEz Studios Shared Inspection Index + PULSAR (No Limits Edition) ]]
 
 local plr = game:GetService("Players").LocalPlayer
 local UIS = game:GetService("UserInputService")
@@ -92,7 +92,7 @@ brandSub.Font = Enum.Font.Gotham
 brandSub.TextSize = 9
 brandSub.TextXAlignment = Enum.TextXAlignment.Left
 brandSub.TextColor3 = Color3.fromRGB(177, 145, 235)
-brandSub.Text = "by PRIMEz Studios  •  v21"
+brandSub.Text = "by PRIMEz Studios  •  v22"
 brandSub.Parent = bar
 
 -- manual drag on the title bar only
@@ -181,7 +181,7 @@ footer.Font = Enum.Font.Gotham
 footer.TextSize = 9
 footer.TextXAlignment = Enum.TextXAlignment.Right
 footer.TextColor3 = Color3.fromRGB(133, 112, 170)
-footer.Text = "PRIMEz Studios   •   Shared Inspection Index   •   v21.0"
+footer.Text = "PRIMEz Studios   •   Shared Inspection Index   •   v22.0 (No Limits)"
 footer.Parent = win
 local function flash(t, c)
   status.Text = tostring(t)
@@ -557,8 +557,31 @@ local function markInspectionIndexDirty()
   if indexInfo then indexInfo.Text = "INDEX OUTDATED · refresh pending" end
 end
 
-local PULSAR_INDEX_MAX_ITEMS = 180
-local PULSAR_INDEX_MAX_CHARS = 10500
+local KNOWN_SERVICES = {
+  "Workspace", "Players", "Lighting", "ReplicatedFirst", "ReplicatedStorage",
+  "StarterGui", "StarterPack", "StarterPlayer", "SoundService", "Chat",
+  "TextChatService", "LocalizationService", "JointsService", "MaterialService",
+  "ServerScriptService", "ServerStorage", "HttpService",
+}
+
+local function resolveTarget(name)
+  if not name or name == "" then return nil end
+  name = name:gsub("^%s+", ""):gsub("%s+$", "")
+  local ok, s = pcall(function() return game:GetService(name) end)
+  if ok and s then return s end
+  for _, sName in ipairs(KNOWN_SERVICES) do
+    if sName:lower() == name:lower() then
+      local sOk, res = pcall(function() return game:GetService(sName) end)
+      if sOk and res then return res end
+    end
+  end
+  local found
+  pcall(function()
+    found = game:FindFirstChild(name, true)
+  end)
+  return found
+end
+
 local PULSAR_INDEX_PROPERTIES = {
   "Value", "Text", "Visible", "Enabled", "Active", "Anchored", "CanCollide",
   "Transparency", "Position", "Size", "WalkSpeed", "JumpPower", "JumpHeight",
@@ -576,7 +599,7 @@ local function indexValue(inst, propertyName)
     return nil
   end
   local rendered = valueToText(value)
-  if #rendered > 96 then rendered = rendered:sub(1, 93) .. "..." end
+  if #rendered > 120 then rendered = rendered:sub(1, 117) .. "..." end
   return propertyName .. "=" .. rendered
 end
 
@@ -584,18 +607,34 @@ local function rebuildInspectionIndex()
   if not inspectionIndexDirty then return inspectionIndexCache end
   local buildEpoch = inspectionIndexEpoch
   local lines = {
-    "SCOPE: client-visible DataModel descendants reachable through standard GetChildren().",
-    "LIMITS: bounded snapshot; no server-only data, protected internals, or script-source extraction.",
+    "SCOPE: Full client-accessible Roblox DataModel descendants (NO LIMITS).",
+    "STATUS: Complete, unconstrained live hierarchy snapshot.",
   }
-  local stack, seen = {}, {}
+  local stack, seen, seenRoots = {}, {}, {}
+
+  -- Discover all accessible root services (StarterPlayer, ServerStorage, Workspace, etc.)
+  for _, sName in ipairs(KNOWN_SERVICES) do
+    pcall(function()
+      local s = game:GetService(sName)
+      if s and s ~= gui and not seenRoots[s] then
+        seenRoots[s] = true
+        stack[#stack + 1] = s
+      end
+    end)
+  end
+
   local roots = {}
   pcall(function() roots = game:GetChildren() end)
   for i = #roots, 1, -1 do
-    if roots[i] ~= gui then stack[#stack + 1] = roots[i] end
+    local r = roots[i]
+    if r and r ~= gui and not seenRoots[r] then
+      seenRoots[r] = true
+      stack[#stack + 1] = r
+    end
   end
 
-  local count, chars, truncated = 0, #lines[1] + #lines[2] + 2, false
-  while #stack > 0 and count < PULSAR_INDEX_MAX_ITEMS do
+  local count = 0
+  while #stack > 0 do
     local inst = table.remove(stack)
     if inst and inst ~= gui and not seen[inst] then
       seen[inst] = true
@@ -609,13 +648,11 @@ local function rebuildInspectionIndex()
         "PATH: " .. tostring(pathOf(inst)),
       }
 
-      local propParts, propCount = {}, 0
+      local propParts = {}
       for _, propertyName in ipairs(PULSAR_INDEX_PROPERTIES) do
         local rendered = indexValue(inst, propertyName)
         if rendered then
           propParts[#propParts + 1] = rendered
-          propCount += 1
-          if propCount >= 7 then break end
         end
       end
       if #propParts > 0 then entry[#entry + 1] = "PROPERTIES: " .. table.concat(propParts, " | ") end
@@ -626,12 +663,11 @@ local function rebuildInspectionIndex()
         for key in pairs(attrs) do keys[#keys + 1] = tostring(key) end
         table.sort(keys)
         local attrParts = {}
-        for i = 1, math.min(#keys, 5) do
+        for i = 1, #keys do
           local key = keys[i]
           local valueOk, value = pcall(function() return inst:GetAttribute(key) end)
           if valueOk then
             local rendered = valueToText(value)
-            if #rendered > 72 then rendered = rendered:sub(1, 69) .. "..." end
             attrParts[#attrParts + 1] = key .. "=" .. rendered
           end
         end
@@ -639,19 +675,14 @@ local function rebuildInspectionIndex()
       end
 
       local childParts = {}
-      for i = 1, math.min(#children, 7) do
+      for i = 1, #children do
         local child = children[i]
         childParts[#childParts + 1] = tostring(child.Name) .. "<" .. tostring(child.ClassName) .. ">"
       end
       if #childParts > 0 then entry[#entry + 1] = "DIRECT CHILDREN: " .. table.concat(childParts, ", ") end
 
-      local block = table.concat(entry, "\n")
-      if chars + #block + 1 > PULSAR_INDEX_MAX_CHARS then
-        truncated = true
-        break
-      end
-      lines[#lines + 1] = block
-      chars += #block + 1
+      lines[#lines + 1] = table.concat(entry, "
+")
       count += 1
 
       for i = #children, 1, -1 do
@@ -660,22 +691,23 @@ local function rebuildInspectionIndex()
         end
       end
 
-      if count % 30 == 0 then task.wait() end
+      if count % 40 == 0 then task.wait() end
     end
   end
 
-  if #stack > 0 then truncated = true end
   inspectionIndexCount = count
-  inspectionIndexTruncated = truncated
+  inspectionIndexTruncated = false
   inspectionIndexRevision += 1
-  inspectionIndexCache = table.concat(lines, "\n")
-    .. ("\nINDEX SUMMARY: %d instances indexed; revision %d; %s."):format(
-      count, inspectionIndexRevision, truncated and "snapshot truncated by safety limits" or "snapshot complete"
+  inspectionIndexCache = table.concat(lines, "
+")
+    .. ("
+INDEX SUMMARY: %d instances indexed; revision %d; full complete unconstrained index."):format(
+      count, inspectionIndexRevision
     )
   inspectionIndexDirty = inspectionIndexEpoch ~= buildEpoch
   if indexInfo then
-    indexInfo.Text = ("INDEX %d · REV %d%s"):format(
-      inspectionIndexCount, inspectionIndexRevision, inspectionIndexTruncated and " · LIMITED" or ""
+    indexInfo.Text = ("INDEX %d · REV %d · FULL"):format(
+      inspectionIndexCount, inspectionIndexRevision
     )
     indexInfo.TextColor3 = inspectionIndexDirty and C.dim or C.good
   end
@@ -1650,7 +1682,7 @@ pzTitle.Font = Enum.Font.GothamBold
 pzTitle.TextSize = 16
 pzTitle.TextXAlignment = Enum.TextXAlignment.Left
 pzTitle.TextColor3 = Color3.fromRGB(176,130,255)
-pzTitle.Text = "✦  PULSAR AI  ·  PRIMEz Assistant"
+pzTitle.Text = "✦  PULSAR AI  ·  PRIMEz Assistant (v22)"
 pzTitle.Parent = pz
 
 local pzStatus = Instance.new("TextLabel")
@@ -1882,65 +1914,99 @@ RESPONSE STYLE
 Answer the actual question first. For feature questions, explain where to click and what the user should see. For errors, diagnose from supplied evidence and ask for the exact error when needed. Avoid generic “please clarify” replies when the TinyDex context already makes the intent clear. Never invent buttons, tabs, endpoints, permissions, or capabilities.
 ]]
 
-local function getSelectionContext()
+local function getSelectionContext(userPrompt)
   local parts = {
-    "CURRENT PRODUCT: PRIMEz Studios TinyDex v21",
+    "CURRENT PRODUCT: PRIMEz Studios TinyDex v22 (Uncapped Edition)",
     "OFFICIAL SITE: https://primez-studios.onrender.com/",
     "ACTIVE CLIENT CAPABILITIES AND PULSAR KNOWLEDGE:",
     PULSAR_PRODUCT_KNOWLEDGE,
-    "LIVE TINYDEX INSPECTION INDEX (shared source for Explorer and PULSAR):",
-    rebuildInspectionIndex(),
-    ("INDEX METADATA: %d indexed instances; revision %d; %s."):format(
-      inspectionIndexCount, inspectionIndexRevision,
-      inspectionIndexTruncated and "limited/truncated" or "complete"
-    ),
   }
-  if not includeSelection then
-    table.insert(parts, "LIVE SELECTION: disabled by user. Do not infer a selected object.")
-    return table.concat(parts, "\n\n")
-  end
-  if not selected then
-    table.insert(parts, "LIVE SELECTION: none. Ask the user to select an Explorer item if object-specific help is needed.")
-    return table.concat(parts, "\n\n")
-  end
-  table.insert(parts, "LIVE SELECTED INSTANCE CONTEXT:")
-  table.insert(parts, "Name: " .. tostring(selected.Name))
-  table.insert(parts, "Class: " .. tostring(selected.ClassName))
-  table.insert(parts, "Path: " .. tostring(pathOf(selected)))
-  table.insert(parts, "FRESH READABLE SELECTED PROPERTIES:")
-  local propertyNames = readableProperties(selected)
-  local sentProperties = 0
-  for _, propertyName in ipairs(propertyNames) do
-    if sentProperties >= 30 then break end
-    local valueOk, value = pcall(function() return selected[propertyName] end)
-    if valueOk then
-      local rendered = valueToText(value)
-      if #rendered > 160 then rendered = rendered:sub(1, 157) .. "..." end
-      table.insert(parts, propertyName .. " = " .. rendered)
-      sentProperties += 1
+
+  -- Target resolution: check if the user asked to inspect a specific service or object (e.g. StarterPlayer, ServerStorage, etc.)
+  local explicitTarget = nil
+  if type(userPrompt) == "string" and userPrompt ~= "" then
+    local matchTarget = userPrompt:match("[Ii]nspect%s+([%w_%.]+)")
+      or userPrompt:match("[Cc]heck%s+([%w_%.]+)")
+      or userPrompt:match("[Ss]how%s+([%w_%.]+)")
+    if matchTarget then
+      explicitTarget = resolveTarget(matchTarget)
+    end
+    if not explicitTarget then
+      for _, sName in ipairs(KNOWN_SERVICES) do
+        if userPrompt:lower():find(sName:lower(), 1, true) then
+          explicitTarget = resolveTarget(sName)
+          if explicitTarget then break end
+        end
+      end
     end
   end
-  local ok, attrs = pcall(function() return selected:GetAttributes() end)
-  if ok and type(attrs) == "table" then
-    local keys = {}
-    for key in pairs(attrs) do table.insert(keys, tostring(key)) end
-    table.sort(keys)
-    for i = 1, math.min(#keys, 12) do
-      local key = keys[i]
-      local valueOk, value = pcall(function() return selected:GetAttribute(key) end)
-      if valueOk then table.insert(parts, "Attribute " .. key .. ": " .. tostring(value)) end
+
+  local targetInst = explicitTarget or (includeSelection and selected or nil)
+
+  if targetInst then
+    table.insert(parts, "LIVE TARGET / SELECTED INSTANCE CONTEXT:")
+    table.insert(parts, "Name: " .. tostring(targetInst.Name))
+    table.insert(parts, "Class: " .. tostring(targetInst.ClassName))
+    table.insert(parts, "Path: " .. tostring(pathOf(targetInst)))
+
+    table.insert(parts, "ALL READABLE PROPERTIES (NO LIMITS):")
+    local propertyNames = readableProperties(targetInst)
+    for _, propertyName in ipairs(propertyNames) do
+      local valueOk, value = pcall(function() return targetInst[propertyName] end)
+      if valueOk then
+        table.insert(parts, propertyName .. " = " .. valueToText(value))
+      end
+    end
+
+    local ok, attrs = pcall(function() return targetInst:GetAttributes() end)
+    if ok and type(attrs) == "table" then
+      local keys = {}
+      for key in pairs(attrs) do table.insert(keys, tostring(key)) end
+      table.sort(keys)
+      table.insert(parts, "ALL ATTRIBUTES (NO LIMITS):")
+      for i = 1, #keys do
+        local key = keys[i]
+        local valueOk, value = pcall(function() return targetInst:GetAttribute(key) end)
+        if valueOk then table.insert(parts, "Attribute " .. key .. ": " .. tostring(value)) end
+      end
+      if #keys == 0 then table.insert(parts, "Attributes: (none)") end
+    end
+
+    local childrenOk, children = pcall(function() return targetInst:GetChildren() end)
+    if childrenOk and type(children) == "table" then
+      table.insert(parts, "ALL DIRECT CHILDREN (Count: " .. tostring(#children) .. "):")
+      for i = 1, #children do
+        local child = children[i]
+        table.insert(parts, "Child " .. i .. ": " .. tostring(child.Name) .. " <" .. tostring(child.ClassName) .. ">")
+      end
+      if #children == 0 then
+        table.insert(parts, "Children: (none or not replicated to client)")
+      end
+    end
+
+    local descendantsOk, descendants = pcall(function() return targetInst:GetDescendants() end)
+    if descendantsOk and type(descendants) == "table" and #descendants > 0 then
+      table.insert(parts, "ALL DESCENDANTS (" .. #descendants .. " total):")
+      for i = 1, #descendants do
+        local desc = descendants[i]
+        table.insert(parts, "Descendant " .. i .. ": " .. tostring(desc.Name) .. " <" .. tostring(desc.ClassName) .. "> at " .. pathOf(desc))
+      end
+    end
+  else
+    if not includeSelection then
+      table.insert(parts, "LIVE SELECTION: disabled by user.")
+    else
+      table.insert(parts, "LIVE SELECTION: none selected. Tip: Select an item or ask 'inspect <service>' (e.g. StarterPlayer).")
     end
   end
-  local childrenOk, children = pcall(function() return selected:GetChildren() end)
-  if childrenOk and type(children) == "table" then
-    table.insert(parts, "Direct child count: " .. tostring(#children))
-    for i = 1, math.min(#children, 20) do
-      local child = children[i]
-      table.insert(parts, "Child " .. i .. ": " .. tostring(child.Name) .. " <" .. tostring(child.ClassName) .. ">")
-    end
-    if #children > 20 then table.insert(parts, "Child listing truncated at 20 entries.") end
-  end
-  return table.concat(parts, "\n")
+
+  table.insert(parts, "LIVE TINYDEX FULL INSPECTION INDEX (FULL DATA MODEL):")
+  table.insert(parts, rebuildInspectionIndex())
+  table.insert(parts, ("INDEX METADATA: %d indexed instances; revision %d; full complete unconstrained index."):format(
+    inspectionIndexCount, inspectionIndexRevision
+  ))
+
+  return table.concat(parts, "\n\n")
 end
 
 local function refreshPulsarStatus()
@@ -1975,7 +2041,7 @@ local function sendPulsar()
   task.spawn(function()
     -- Build the shared index off the UI event thread; the snapshot builder
     -- yields periodically so larger client-visible hierarchies stay responsive.
-    local contextOk, context = pcall(getSelectionContext)
+    local contextOk, context = pcall(getSelectionContext, prompt)
     if not contextOk then
       addChatMessage("CONTEXT ERROR", "Could not build the inspection context: " .. tostring(context), true)
       busy = false
