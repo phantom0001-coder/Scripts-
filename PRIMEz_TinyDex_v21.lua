@@ -469,6 +469,82 @@ clearDraft.MouseButton1Click:Connect(function()
 end)
 
 local selected, expanded, vis = nil, {}, {}
+local propList, vp -- forward declarations used by diagnostics
+local selBox = Instance.new("SelectionBox")
+selBox.LineThickness = 0.03
+selBox.Color3 = Color3.fromRGB(0, 170, 255)
+selBox.Visible = false
+selBox.Parent = workspace
+
+local function pathOf(i)
+  local ok, p = pcall(function() return i:GetFullName() end)
+  return ok and p or "?"
+end
+
+-- Roblox Instances are userdata-like objects: `next(instance)` does not
+-- enumerate their properties. Probe a safe, broad list and keep readable ones.
+local PROPERTY_CANDIDATES = {
+  "Name", "ClassName", "Parent", "Archivable", "AbsolutePosition", "AbsoluteSize",
+  "AnchorPoint", "AutomaticSize", "BackgroundColor3", "BackgroundTransparency",
+  "BorderColor3", "BorderSizePixel", "CanvasPosition", "CanvasSize", "ClipsDescendants",
+  "Color", "CFrame", "CastShadow", "CanCollide", "CanQuery", "CanTouch", "Transparency",
+  "BrickColor", "Material", "Reflectance", "Size", "Position", "Orientation", "PivotOffset",
+  "Shape", "TopSurface", "BottomSurface", "LeftSurface", "RightSurface", "FrontSurface",
+  "BackSurface", "AssemblyLinearVelocity", "AssemblyAngularVelocity", "Mass",
+  "Massless", "Anchored", "Velocity", "RotVelocity", "CollisionGroup",
+  "Text", "TextColor3", "TextTransparency", "TextSize", "TextScaled", "TextWrapped",
+  "TextXAlignment", "TextYAlignment", "Font", "FontFace", "RichText", "PlaceholderText",
+  "Image", "ImageColor3", "ImageTransparency", "ImageRectOffset", "ImageRectSize",
+  "Visible", "Enabled", "Active", "Selectable", "Modal", "DisplayOrder", "ResetOnSpawn",
+  "ZIndex", "LayoutOrder", "Rotation", "ScaleType", "SliceCenter", "TileSize",
+  "Value", "MaxValue", "MinValue", "Disabled", "Looped", "Playing", "TimePosition",
+  "PlaybackSpeed", "Volume", "SoundId", "AnimationId", "WalkSpeed", "JumpPower",
+  "JumpHeight", "HipHeight", "Health", "MaxHealth", "Team", "Neutral", "UserId",
+  "AccountAge", "DisplayName", "RigType", "PrimaryPart", "WorldPivot", "ModelStreamingMode",
+  "CurrentCamera", "FieldOfView", "CameraType", "CameraSubject", "Focus", "Ambient",
+  "LightColor", "LightDirection", "Brightness", "ClockTime", "GeographicLatitude",
+  "FogColor", "FogEnd", "FogStart", "GlobalShadows", "OutdoorAmbient", "TimeOfDay",
+  "PlaybackState", "SoundGroup", "EmitterSize", "RollOffMaxDistance", "RollOffMinDistance",
+  "Rate", "Lifetime", "Speed", "SpreadAngle", "Enabled", "Texture", "TextureID",
+  "MeshId", "TextureID", "Animation", "PrimaryAxis", "SecondaryAxis", "Target",
+  "TargetFilter", "CurrentDistance", "Enabled", "Style", "Color3", "TextButton",
+}
+local READ_ONLY_PROPERTIES = {
+  ClassName = true, Parent = true, AbsolutePosition = true, AbsoluteSize = true,
+  AssemblyLinearVelocity = true, AssemblyAngularVelocity = true, Mass = true,
+  PlaybackState = true, UserId = true, AccountAge = true, DisplayName = true,
+  CurrentDistance = true,
+}
+local function readableProperties(inst)
+  local names, seen = {}, {}
+  local function addName(name)
+    if type(name) ~= "string" or seen[name] then return end
+    seen[name] = true
+    local ok = pcall(function() return inst[name] end)
+    if ok then names[#names + 1] = name end
+  end
+
+  -- Standard Roblox Luau does not expose universal property enumeration.
+  -- Use the curated, readable property list below; no executor APIs are probed.
+  -- Standard Roblox fallback: enumerate a broad, safe list of common
+  -- properties. No property is assigned during copying.
+  for _, name in ipairs(PROPERTY_CANDIDATES) do addName(name) end
+  table.sort(names)
+  return names
+end
+
+local function valueToText(value)
+  local kind = typeof(value)
+  if kind == "Instance" then return pathOf(value) end
+  if kind == "string" then return string.format("%q", value) end
+  if kind == "table" then
+    local ok, encoded = pcall(function() return HttpService:JSONEncode(value) end)
+    if ok then return encoded end
+  end
+  return tostring(value)
+end
+
+
 local inspectionIndexDirty, inspectionIndexEpoch = true, 0
 local inspectionIndexCache = "Inspection index has not been built yet."
 local inspectionIndexRevision, inspectionIndexCount = 0, 0
@@ -588,7 +664,7 @@ local function rebuildInspectionIndex()
     end
   end
 
-  if #stack > 0 or count >= PULSAR_INDEX_MAX_ITEMS then truncated = true end
+  if #stack > 0 then truncated = true end
   inspectionIndexCount = count
   inspectionIndexTruncated = truncated
   inspectionIndexRevision += 1
@@ -606,84 +682,12 @@ local function rebuildInspectionIndex()
   return inspectionIndexCache
 end
 
-game.DescendantAdded:Connect(markInspectionIndexDirty)
-game.DescendantRemoving:Connect(markInspectionIndexDirty)
-
-local propList, vp -- forward declarations used by diagnostics
-local selBox = Instance.new("SelectionBox")
-selBox.LineThickness = 0.03
-selBox.Color3 = Color3.fromRGB(0, 170, 255)
-selBox.Visible = false
-selBox.Parent = workspace
-
-local function pathOf(i)
-  local ok, p = pcall(function() return i:GetFullName() end)
-  return ok and p or "?"
-end
-
--- Roblox Instances are userdata-like objects: `next(instance)` does not
--- enumerate their properties. Probe a safe, broad list and keep readable ones.
-local PROPERTY_CANDIDATES = {
-  "Name", "ClassName", "Parent", "Archivable", "AbsolutePosition", "AbsoluteSize",
-  "AnchorPoint", "AutomaticSize", "BackgroundColor3", "BackgroundTransparency",
-  "BorderColor3", "BorderSizePixel", "CanvasPosition", "CanvasSize", "ClipsDescendants",
-  "Color", "CFrame", "CastShadow", "CanCollide", "CanQuery", "CanTouch", "Transparency",
-  "BrickColor", "Material", "Reflectance", "Size", "Position", "Orientation", "PivotOffset",
-  "Shape", "TopSurface", "BottomSurface", "LeftSurface", "RightSurface", "FrontSurface",
-  "BackSurface", "AssemblyLinearVelocity", "AssemblyAngularVelocity", "Mass",
-  "Massless", "Anchored", "Velocity", "RotVelocity", "CollisionGroup",
-  "Text", "TextColor3", "TextTransparency", "TextSize", "TextScaled", "TextWrapped",
-  "TextXAlignment", "TextYAlignment", "Font", "FontFace", "RichText", "PlaceholderText",
-  "Image", "ImageColor3", "ImageTransparency", "ImageRectOffset", "ImageRectSize",
-  "Visible", "Enabled", "Active", "Selectable", "Modal", "DisplayOrder", "ResetOnSpawn",
-  "ZIndex", "LayoutOrder", "Rotation", "ScaleType", "SliceCenter", "TileSize",
-  "Value", "MaxValue", "MinValue", "Disabled", "Looped", "Playing", "TimePosition",
-  "PlaybackSpeed", "Volume", "SoundId", "AnimationId", "WalkSpeed", "JumpPower",
-  "JumpHeight", "HipHeight", "Health", "MaxHealth", "Team", "Neutral", "UserId",
-  "AccountAge", "DisplayName", "RigType", "PrimaryPart", "WorldPivot", "ModelStreamingMode",
-  "CurrentCamera", "FieldOfView", "CameraType", "CameraSubject", "Focus", "Ambient",
-  "LightColor", "LightDirection", "Brightness", "ClockTime", "GeographicLatitude",
-  "FogColor", "FogEnd", "FogStart", "GlobalShadows", "OutdoorAmbient", "TimeOfDay",
-  "PlaybackState", "SoundGroup", "EmitterSize", "RollOffMaxDistance", "RollOffMinDistance",
-  "Rate", "Lifetime", "Speed", "SpreadAngle", "Enabled", "Texture", "TextureID",
-  "MeshId", "TextureID", "Animation", "PrimaryAxis", "SecondaryAxis", "Target",
-  "TargetFilter", "CurrentDistance", "Enabled", "Style", "Color3", "TextButton",
-}
-local READ_ONLY_PROPERTIES = {
-  ClassName = true, Parent = true, AbsolutePosition = true, AbsoluteSize = true,
-  AssemblyLinearVelocity = true, AssemblyAngularVelocity = true, Mass = true,
-  PlaybackState = true, UserId = true, AccountAge = true, DisplayName = true,
-  CurrentDistance = true,
-}
-local function readableProperties(inst)
-  local names, seen = {}, {}
-  local function addName(name)
-    if type(name) ~= "string" or seen[name] then return end
-    seen[name] = true
-    local ok = pcall(function() return inst[name] end)
-    if ok then names[#names + 1] = name end
-  end
-
-  -- Standard Roblox Luau does not expose universal property enumeration.
-  -- Use the curated, readable property list below; no executor APIs are probed.
-  -- Standard Roblox fallback: enumerate a broad, safe list of common
-  -- properties. No property is assigned during copying.
-  for _, name in ipairs(PROPERTY_CANDIDATES) do addName(name) end
-  table.sort(names)
-  return names
-end
-
-local function valueToText(value)
-  local kind = typeof(value)
-  if kind == "Instance" then return pathOf(value) end
-  if kind == "string" then return string.format("%q", value) end
-  if kind == "table" then
-    local ok, encoded = pcall(function() return HttpService:JSONEncode(value) end)
-    if ok then return encoded end
-  end
-  return tostring(value)
-end
-
+game.DescendantAdded:Connect(function(inst)
+  if inst ~= gui and not inst:IsDescendantOf(gui) then markInspectionIndexDirty() end
+end)
+game.DescendantRemoving:Connect(function(inst)
+  if inst ~= gui and not inst:IsDescendantOf(gui) then markInspectionIndexDirty() end
+end)
 local function dump(inst, out)
   if not inst or not inst.Parent and inst ~= game then return end
   out[#out+1] = "=================================================="
