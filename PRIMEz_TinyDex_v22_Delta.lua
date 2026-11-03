@@ -2509,7 +2509,7 @@ local function sendPulsar()
         resultParts[#resultParts + 1] = ("TOOL_RESULT %s (%s)\n%s"):format(call.id, call.tool, result)
       end
       resultParts[#resultParts + 1] = "Tool results above are live read-only facts from the client. Continue: emit more TOOL_CALL lines if needed, otherwise give the final answer as plain text with NO TOOL_CALL lines."
-      table.insert(conversation, { role = "user", content: table.concat(resultParts, "\n\n") })
+      table.insert(conversation, { role = "user", content = table.concat(resultParts, "\n\n") })
       while #conversation > 24 do table.remove(conversation, 1) end
     end
     busy = false
@@ -2558,3 +2558,4 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
