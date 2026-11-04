@@ -2549,7 +2549,7 @@ end
 local conversation = {}
 local includeSelection = true
 local busy = false
-local MAX_STEPS = 8
+local MAX_STEPS = 40
 
 local function scrollFeed()
   task.defer(function()
@@ -2771,6 +2771,30 @@ local function extractLeakedToolCalls(reply)
   return decoded.tool_calls
 end
 
+-- ── Text tool protocol (works with any backend, including the current ──
+-- PRIMEz passthrough): the model asks for tools with plain lines like
+-- TOOL_CALL {"id":"c1","tool":"run_luau","args":{"code":"print('hi')"}}
+-- and the client executes them locally and returns TOOL_RESULT blocks.
+local function parseTextToolCalls(reply)
+  if type(reply) ~= "string" then return nil end
+  local calls = {}
+  for line in reply:gmatch("[^\r\n]+") do
+    local payload = line:match("^%s*TOOL_CALL%s+(%b{})%s*$")
+    if payload then
+      local okDecode, decoded = pcall(function() return HttpService:JSONDecode(payload) end)
+      if okDecode and type(decoded) == "table" and type(decoded.tool or decoded.name) == "string" then
+        calls[#calls + 1] = {
+          id = tostring(decoded.id or ("t" .. #calls + 1)),
+          name = tostring(decoded.tool or decoded.name),
+          args = decoded.args or decoded.arguments or {},
+        }
+      end
+    end
+  end
+  if #calls == 0 then return nil end
+  return calls
+end
+
 -- ── System context (agentic product knowledge) ─────────────────────────
 local PULSAR_SYSTEM = [[
 IDENTITY
@@ -2805,6 +2829,10 @@ SCRIPT RULES
 
 RESPONSE FORMAT
 - While working: request tools through the tool_calls mechanism. Do not narrate more than one short sentence per step.
+- TOOL LINE FALLBACK (use this when the tool_calls mechanism is not active on this connection): request tools by emitting plain lines, one per line, as your ENTIRE reply — the TinyDex client executes them locally and returns TOOL_RESULT blocks:
+TOOL_CALL {"id":"c1","tool":"analyze_game","args":{"scope":"summary"}}
+TOOL_CALL {"id":"c2","tool":"run_luau","args":{"code":"print('hi')"}}
+Tool names: analyze_game, inspect, list_children, search_game, read_property, get_selection, get_logs, run_luau, save_draft, set_property, create_instance, destroy_instance. While tool results are pending, emit nothing except TOOL_CALL lines. After TOOL_RESULT blocks arrive, continue with more TOOL_CALL lines or give the final answer as plain text with NO TOOL_CALL lines.
 - Final answer: plain text with ```lua fenced blocks for any script code (they render as RUN/COPY cards). Keep it concise and practical.
 - Never mention model vendors, provider names, routing vendors, or infrastructure labels.
 - Never fabricate tool results or capabilities. If a tool fails, say what failed and adapt.
@@ -2961,9 +2989,27 @@ local function runAgentTurn(userPrompt)
         addChatMessage("CONNECTION ERROR", "PRIMEz AI returned no reply and no tool calls.", true)
         return false
       end
+      -- Text tool protocol (current PRIMEz backend): the model asks for
+      -- tools via TOOL_CALL lines; execute them and feed results back.
+      local textCalls = parseTextToolCalls(reply)
       -- v22 bug fix: a backend that leaks raw tool_calls JSON inside `reply`.
       local leaked = extractLeakedToolCalls(reply)
-      if leaked then
+      if textCalls then
+        local parts = {}
+        for _, call in ipairs(textCalls) do
+          local result = dispatchTool(call.name, call.args)
+          toolUses += 1
+          local summary = tostring(result.output or ""):gsub("[\r\n]+", " ")
+          if #summary > 90 then summary = summary:sub(1, 90) .. "…" end
+          addToolChip(call.name, summary, result.ok)
+          parts[#parts + 1] = ("TOOL_RESULT %s (%s)\n%s"):format(call.id, call.name, tostring(result.output))
+        end
+        parts[#parts + 1] = "Tool results above are live facts from the client. Continue: emit more TOOL_CALL lines if needed, otherwise give the final answer as plain text with NO TOOL_CALL lines."
+        conversation[#conversation + 1] = { role = "assistant", content = reply }
+        conversation[#conversation + 1] = { role = "user", content = table.concat(parts, "\n\n") }
+        trimConversation()
+        task.wait(0.1)
+      elseif leaked then
         addChatMessage("PULSAR", "The PRIMEz backend sent raw tool calls inside the reply text (v22 bug detected). Executing them anyway…", true)
         for _, call in ipairs(leaked) do
           local callId = tostring(call and call.id or ("leaked_" .. toolUses))
@@ -2993,10 +3039,10 @@ local function runAgentTurn(userPrompt)
       end
     end
   end
-  addChatMessage("PULSAR", ("Reached the %d-step limit. Ask me to continue."):format(MAX_STEPS), true)
-  pzStatus.Text = "● Step limit reached"
-  pzStatus.TextColor3 = C.bad
-  return false
+  addChatMessage("PULSAR", ("I completed %d automatic agent steps in this turn. Say 'continue' and I will pick up exactly where I stopped."):format(MAX_STEPS))
+  pzStatus.Text = "● Step budget used — say continue"
+  pzStatus.TextColor3 = C.dim
+  return true
 end
 
 local function sendPulsar()
@@ -3076,3 +3122,4 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
