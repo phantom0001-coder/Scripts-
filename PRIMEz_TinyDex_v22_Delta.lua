@@ -1,4 +1,4 @@
---[[ TinyDex v22.3 DELTA — PRIMEz Studios Shared Inspection Index + PULSAR Live Tools (Delta Agentic Edition) ]]
+--[[ TinyDex v22.4 DELTA — PRIMEz Studios Shared Inspection Index + PULSAR Full Access Tools (Delta Agentic Edition) ]]
 
 -- DELTA BOOT: executors inject before the client finishes loading.
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -450,7 +450,7 @@ editorNote.Font = Enum.Font.Gotham
 editorNote.TextSize = 9
 editorNote.TextXAlignment = Enum.TextXAlignment.Left
 editorNote.TextColor3 = C.dim
-editorNote.Text = "DRAFT MODE  •  No arbitrary code execution from this client"
+editorNote.Text = "DRAFT MODE  •  PULSAR can write and run this draft (apply_draft / run_code)"
 editorNote.Parent = codePage
 local function checkDraft()
   local source = editor.Text or ""
@@ -1663,7 +1663,7 @@ termIn.FocusLost:Connect(function(enter)
   out("> " .. command, Color3.fromRGB(120,120,135))
   if command == "help" then
     out("Commands: help, refresh, selected, children, count, path, clear")
-    out("Read-only diagnostics only. Use Studio Script Editor to run project code.")
+    out("User commands are read-only diagnostics. PULSAR AI can execute Luau here via its run_code tool.")
   elseif command == "refresh" then
     safe("render", render)
     safe("props", refreshProps)
@@ -1865,6 +1865,37 @@ end
 local conversation = {}
 local includeSelection = true
 local busy = false
+local function copyTextToClipboard(text)
+  local done = false
+  pcall(function()
+    if type(setclipboard) == "function" then setclipboard(text) done = true end
+  end)
+  if not done then
+    pcall(function()
+      if type(toclipboard) == "function" then toclipboard(text) done = true end
+    end)
+  end
+  return done
+end
+
+local function splitMessageLines(s)
+  local lines = {}
+  local startPos = 1
+  while true do
+    local nl = s:find("\n", startPos, true)
+    if not nl then
+      lines[#lines + 1] = s:sub(startPos)
+      break
+    end
+    lines[#lines + 1] = s:sub(startPos, nl - 1)
+    startPos = nl + 1
+  end
+  for i = 1, #lines do
+    lines[i] = lines[i]:gsub("\r$", "")
+  end
+  return lines
+end
+
 local function addChatMessage(who, message, isError)
   local card = Instance.new("Frame")
   card.BackgroundColor3 = (who == "YOU") and Color3.fromRGB(31,35,47) or Color3.fromRGB(34,29,43)
@@ -1883,19 +1914,143 @@ local function addChatMessage(who, message, isError)
   name.TextColor3 = isError and C.bad or (who == "YOU" and C.hot or Color3.fromRGB(190,145,255))
   name.Text = who
   name.Parent = card
-  local body = Instance.new("TextLabel")
-  body.Size = UDim2.new(1, -14, 0, 0)
-  body.Position = UDim2.fromOffset(7, 21)
-  body.AutomaticSize = Enum.AutomaticSize.Y
-  body.BackgroundTransparency = 1
-  body.Font = Enum.Font.Gotham
-  body.TextSize = 11
-  body.TextWrapped = true
-  body.TextXAlignment = Enum.TextXAlignment.Left
-  body.TextYAlignment = Enum.TextYAlignment.Top
-  body.TextColor3 = isError and C.bad or C.txt
-  body.Text = tostring(message)
-  body.Parent = card
+
+  -- Widget layout: the body is a vertical list that renders plain text
+  -- segments normally and fenced code blocks as copyable code cards.
+  local bodyWrap = Instance.new("Frame")
+  bodyWrap.Size = UDim2.new(1, -14, 0, 0)
+  bodyWrap.Position = UDim2.fromOffset(7, 21)
+  bodyWrap.AutomaticSize = Enum.AutomaticSize.Y
+  bodyWrap.BackgroundTransparency = 1
+  bodyWrap.Parent = card
+  local bodyLayout = Instance.new("UIListLayout")
+  bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+  bodyLayout.Padding = UDim.new(0, 7)
+  bodyLayout.Parent = bodyWrap
+
+  local text = tostring(message)
+  local segments = {}
+  local plain, inCode, codeBuf = {}, false, {}
+  for _, line in ipairs(splitMessageLines(text)) do
+    local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
+    if trimmed:sub(1, 3) == "```" then
+      if inCode then
+        segments[#segments + 1] = { kind = "code", text = table.concat(codeBuf, "\n") }
+        inCode, codeBuf = false, {}
+      else
+        if #plain > 0 then
+          segments[#segments + 1] = { kind = "text", text = table.concat(plain, "\n") }
+        end
+        plain = {}
+        inCode = true
+      end
+    elseif inCode then
+      codeBuf[#codeBuf + 1] = line
+    else
+      plain[#plain + 1] = line
+    end
+  end
+  if inCode then
+    segments[#segments + 1] = { kind = "code", text = table.concat(codeBuf, "\n") }
+  end
+  if #plain > 0 then
+    local joined = table.concat(plain, "\n")
+    if joined:gsub("%s", "") ~= "" then
+      segments[#segments + 1] = { kind = "text", text = joined }
+    end
+  end
+  if #segments == 0 then segments[#segments + 1] = { kind = "text", text = text } end
+
+  for i, seg in ipairs(segments) do
+    if seg.kind == "code" and seg.text:gsub("%s", "") ~= "" then
+      local box = Instance.new("Frame")
+      box.Size = UDim2.new(1, 0, 0, 0)
+      box.AutomaticSize = Enum.AutomaticSize.Y
+      box.BackgroundColor3 = Color3.fromRGB(23, 19, 38)
+      box.BorderSizePixel = 0
+      box.LayoutOrder = i
+      box.Parent = bodyWrap
+      Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+      local boxStroke = Instance.new("UIStroke", box)
+      boxStroke.Color = C.line
+      boxStroke.Transparency = 0.4
+      local boxLayout = Instance.new("UIListLayout")
+      boxLayout.SortOrder = Enum.SortOrder.LayoutOrder
+      boxLayout.Parent = box
+      local head = Instance.new("Frame")
+      head.Size = UDim2.new(1, 0, 0, 22)
+      head.BackgroundColor3 = Color3.fromRGB(31, 25, 52)
+      head.BorderSizePixel = 0
+      head.LayoutOrder = 1
+      head.Parent = box
+      Instance.new("UICorner", head).CornerRadius = UDim.new(0, 6)
+      local langLabel = Instance.new("TextLabel")
+      langLabel.Size = UDim2.new(1, -84, 1, 0)
+      langLabel.Position = UDim2.fromOffset(9, 0)
+      langLabel.BackgroundTransparency = 1
+      langLabel.Font = Enum.Font.GothamBold
+      langLabel.TextSize = 9
+      langLabel.TextXAlignment = Enum.TextXAlignment.Left
+      langLabel.TextColor3 = Color3.fromRGB(177, 145, 235)
+      langLabel.Text = "LUA CODE"
+      langLabel.Parent = head
+      local copyBtn = Instance.new("TextButton")
+      copyBtn.Size = UDim2.new(0, 70, 0, 16)
+      copyBtn.Position = UDim2.new(1, -78, 0, 3)
+      copyBtn.BackgroundColor3 = Color3.fromRGB(72, 43, 112)
+      copyBtn.BorderSizePixel = 0
+      copyBtn.Font = Enum.Font.GothamSemibold
+      copyBtn.TextSize = 9
+      copyBtn.TextColor3 = C.txt
+      copyBtn.Text = "COPY"
+      copyBtn.Parent = head
+      Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 5)
+      local codeLabel = Instance.new("TextLabel")
+      codeLabel.Size = UDim2.new(1, 0, 0, 0)
+      codeLabel.AutomaticSize = Enum.AutomaticSize.Y
+      codeLabel.BackgroundTransparency = 1
+      codeLabel.Font = Enum.Font.Code
+      codeLabel.TextSize = 11
+      codeLabel.TextWrapped = true
+      codeLabel.TextXAlignment = Enum.TextXAlignment.Left
+      codeLabel.TextYAlignment = Enum.TextYAlignment.Top
+      codeLabel.TextColor3 = Color3.fromRGB(198, 216, 255)
+      codeLabel.Text = seg.text
+      codeLabel.LayoutOrder = 2
+      codeLabel.Parent = box
+      local codePad = Instance.new("UIPadding", codeLabel)
+      codePad.PaddingTop = UDim.new(0, 4)
+      codePad.PaddingLeft = UDim.new(0, 9)
+      codePad.PaddingRight = UDim.new(0, 9)
+      codePad.PaddingBottom = UDim.new(0, 7)
+      copyBtn.MouseButton1Click:Connect(function()
+        local okClip = copyTextToClipboard(seg.text)
+        if okClip then
+          copyBtn.Text = "COPIED"
+          flash("code copied to clipboard", C.good)
+        else
+          copyBtn.Text = "OPENED"
+          showTextExport("CODE", seg.text)
+          flash("clipboard unavailable - opened a copyable panel instead", C.bad)
+        end
+        task.delay(1.4, function() copyBtn.Text = "COPY" end)
+      end)
+    else
+      local body = Instance.new("TextLabel")
+      body.Size = UDim2.new(1, 0, 0, 0)
+      body.AutomaticSize = Enum.AutomaticSize.Y
+      body.BackgroundTransparency = 1
+      body.Font = Enum.Font.Gotham
+      body.TextSize = 11
+      body.TextWrapped = true
+      body.TextXAlignment = Enum.TextXAlignment.Left
+      body.TextYAlignment = Enum.TextYAlignment.Top
+      body.TextColor3 = isError and C.bad or C.txt
+      body.Text = seg.kind == "code" and seg.text or seg.text
+      body.LayoutOrder = i
+      body.Parent = bodyWrap
+    end
+  end
   task.defer(function()
     chatFeed.CanvasPosition = Vector2.new(0, math.max(0, feedLayout.AbsoluteContentSize.Y + 30))
   end)
@@ -1922,7 +2077,7 @@ TINYDEX GUIDE — CURRENT CLIENT
 - Workspace: the WORKSPACE tab is a Luau draft editor. Users can write/paste and clear drafts, and CHECK performs only a basic delimiter/string/comment balance check. It is not a full Luau compiler and does not execute code.
 - Console: the CONSOLE tab is a read-only utility console. Supported commands: help, refresh, selected, path, children, count, clear. `refresh` updates Explorer/properties; `selected` and `path` show the selected instance/path; `children` lists up to 40 direct children; `count` counts visible descendants up to a safety cap; `clear` clears console output. It does not execute arbitrary scripts.
 - Logs: the Console also displays client log messages captured through the available log event. Explain warning/error colors where relevant.
-- PULSAR AI: this tab is a live agent with access to the entire Dex: the game DataModel (get_content, get_children, get_descendants, get_tree, find, get_services, get_index), the user's selection (get_selection), the WORKSPACE draft editor (get_draft), the CONSOLE logs (get_logs), and the Dex's own live status (get_dex_status). It answers from real data it fetched itself. A compact root summary plus the full Workspace folder tree is attached to every request; all other data is fetched live on demand.
+- PULSAR AI: this tab is a live agent with FULL ACCESS to the entire Dex and the local client. Read tools: the game DataModel (get_content, get_children, get_descendants, get_tree, find, get_services, get_index), the user's selection (get_selection), the WORKSPACE draft editor (get_draft), the CONSOLE logs (get_logs), and the Dex's own live status (get_dex_status). Write tools: run_code (execute Luau in the CONSOLE with output capture), set_property, create_instance, destroy_instance, apply_draft (write and optionally run the draft), clear_console. It answers from real data it fetched itself and it can act on the game directly. A compact root summary plus the full Workspace folder tree is attached to every request; all other data is fetched live on demand.
 
 HOW TO HELP
 When asked “how do I see Workspace?”, tell the user: use Explorer on the left, find Workspace (or search for it), expand its arrow, then select a child; use INSPECT for properties and PREVIEW for supported visual objects. The WORKSPACE tab is the code-draft editor, not the Roblox game Workspace service.
@@ -1930,7 +2085,7 @@ When asked how to use TinyDex, give short numbered steps: find/search in Explore
 When explaining a selected object, use the supplied selection context. Clearly distinguish facts from guesses. If no selection context is present, ask the user to select an object and keep Include selection ON.
 
 PULSAR LIVE TOOL PROTOCOL (READ THE GAME YOURSELF)
-You have read-only tools that execute on the user's client and return live results. When you need game data, do not guess and do not ask the user to look for it — fetch it yourself by emitting one or more tool-call lines, one per line, as your entire reply:
+You have tools that execute live on the user's client and return real results: read tools fetch game data, and write tools modify instances and execute Luau code (client-side only). When you need data or want to act, do not guess and do not ask the user to do it — do it yourself by emitting one or more tool-call lines, one per line, as your entire reply:
 
 TOOL_CALL {"id":"c1","tool":"get_content","args":{"target":"Workspace"}}
 TOOL_CALL {"id":"c2","tool":"find","args":{"query":"Door","max":20}}
@@ -1938,6 +2093,16 @@ TOOL_CALL {"id":"c2","tool":"find","args":{"query":"Door","max":20}}
 The client executes them and returns TOOL_RESULT <id> (<tool>) blocks as the next message; then continue: call more tools or give the final answer as plain text with NO TOOL_CALL lines.
 
 Attached to every request: a root summary of all services AND the full Workspace folder tree (every folder and instance under Workspace, names and classes). For anything deeper, use tools.
+
+RUNTIME ENVIRONMENT (IMPORTANT)
+You are running in the DELTA EXECUTOR edition of TinyDex on a live Roblox client — not in Roblox Studio. Executor globals (loadstring, setclipboard, getgenv and similar) are available to your run_code tool. Your write tools and run_code only affect this local client; nothing replicates to the server or to other players. When executing code, avoid infinite loops (they freeze the client), wrap risky calls in pcall, and keep execution short.
+
+TOOL REFERENCE
+Read: get_services, get_content, get_children, get_descendants, get_tree, find, get_selection, get_index, get_draft, get_logs, get_dex_status.
+Write: run_code {"code": "..."} — executes Luau in the CONSOLE tab and captures print/warn output; set_property {target, property, value} — value may be a JSON literal or a Luau expression string such as "Color3.fromRGB(255,0,0)"; create_instance {class, name?, parent?, properties?}; destroy_instance {target}; apply_draft {code, run?} — writes into the WORKSPACE draft editor and runs it when run=true; clear_console.
+
+CODE FORMAT RULE
+Whenever you give the user code, put it in a fenced code block: three backticks, then lua, then the code, then three backticks. The client renders every fenced block as a styled code card with a COPY button that copies it to the clipboard. Use one card per code snippet, and keep prose outside the fences.
 
 Available tools:
 - get_services {} — all root services of the client DataModel with child counts.
@@ -2227,7 +2392,7 @@ end
 
 local function toolGetDexStatus()
   local out = {}
-  out[#out + 1] = "PRODUCT: PRIMEz Studios TinyDex v22.3 Delta (Agentic Edition)"
+  out[#out + 1] = "PRODUCT: PRIMEz Studios TinyDex v22.4 Delta (Full Access Agentic Edition)"
   local execName = "not reported"
   pcall(function()
     if type(identify_executor) == "function" then
@@ -2266,6 +2431,148 @@ local function toolGetDexStatus()
   return table.concat(out, "\n")
 end
 
+-- PULSAR WRITE/EXEC TOOLS (Delta full access; all changes are client-side only).
+local function pulsarConsoleOut(msg, col)
+  pcall(out, msg, col)
+end
+
+local function toolRunCode(args)
+  local code = args and args.code
+  if type(code) ~= "string" or code == "" then
+    return "ERROR: run_code requires args.code (full Luau source)."
+  end
+  local chunk, compileErr = loadstring(code)
+  if not chunk then
+    return ("ERROR: compile failed: %s"):format(tostring(compileErr))
+  end
+  pulsarConsoleOut("[PULSAR] run_code: executing " .. #code .. " chars of Luau", C.hot)
+  local captured = {}
+  local oldPrint, oldWarn = print, warn
+  print = function(...)
+    local parts = {}
+    for i = 1, luaSelect("#", ...) do parts[#parts + 1] = tostring((luaSelect(i, ...))) end
+    local line = table.concat(parts, "  ")
+    captured[#captured + 1] = line
+    pulsarConsoleOut("[PULSAR] " .. line)
+  end
+  warn = function(...)
+    local parts = {}
+    for i = 1, luaSelect("#", ...) do parts[#parts + 1] = tostring((luaSelect(i, ...))) end
+    local line = "[warn] " .. table.concat(parts, "  ")
+    captured[#captured + 1] = line
+    pulsarConsoleOut("[PULSAR] " .. line, Color3.fromRGB(255,142,60))
+  end
+  local ok, runErr = pcall(chunk)
+  print, warn = oldPrint, oldWarn
+  local lines = {}
+  lines[#lines + 1] = ("RUN_CODE finished %s (%d chars executed in the CONSOLE tab)."):format(ok and "OK" or "WITH ERROR", #code)
+  if #captured > 0 then
+    lines[#lines + 1] = "OUTPUT (print/warn captured; also visible in the CONSOLE tab):"
+    for i = 1, math.min(#captured, 200) do lines[#lines + 1] = captured[i] end
+    if #captured > 200 then
+      lines[#lines + 1] = ("...output truncated at 200 of %d lines"):format(#captured)
+    end
+  else
+    lines[#lines + 1] = "OUTPUT: (no print/warn output was produced)"
+  end
+  if not ok then
+    lines[#lines + 1] = "RUNTIME ERROR: " .. tostring(runErr)
+  end
+  return toolCap(table.concat(lines, "\n"), TOOL_RESULT_CAP)
+end
+
+local function toolSetProperty(args)
+  local target = resolveTarget(args and args.target)
+  if not target then
+    return "ERROR: set_property could not resolve target: " .. tostring(args and args.target)
+  end
+  local property = tostring(args and args.property or "")
+  if property == "" then
+    return "ERROR: set_property requires args.property."
+  end
+  local rawValue = args and args.value
+  local evaluated = rawValue
+  if type(rawValue) == "string" then
+    local okEval, v = pcall(function() return loadstring("return " .. rawValue)() end)
+    if okEval then evaluated = v end
+  end
+  local ok, err = pcall(function() target[property] = evaluated end)
+  if not ok then
+    return ("ERROR: setting %s failed: %s"):format(property, tostring(err))
+  end
+  local okNow, now = pcall(function() return target[property] end)
+  return ("SET OK: %s.%s = %s (client-side only)"):format(
+    pathOf(target), property, okNow and valueToText(now) or tostring(evaluated))
+end
+
+local function toolCreateInstance(args)
+  local class = tostring(args and args.class or "")
+  if class == "" then
+    return "ERROR: create_instance requires args.class (e.g. \"Part\")."
+  end
+  local okInst, inst = pcall(function() return Instance.new(class) end)
+  if not okInst or not inst then
+    return ("ERROR: Instance.new(\"%s\") failed: %s"):format(class, tostring(inst))
+  end
+  if args and args.name then pcall(function() inst.Name = tostring(args.name) end) end
+  local parent = resolveTarget(args and args.parent)
+  if not parent then
+    local okWs, ws = pcall(function() return game:GetService("Workspace") end)
+    if okWs then parent = ws end
+  end
+  if parent then pcall(function() inst.Parent = parent end) end
+  local setCount = 0
+  if type(args and args.properties) == "table" then
+    for key, value in pairs(args.properties) do
+      if pcall(function() inst[key] = value end) then setCount = setCount + 1 end
+    end
+  end
+  return ("CREATED: %s \"%s\" at %s (%d extra props set). Client-side only."):format(
+    tostring(inst.ClassName), tostring(inst.Name), pathOf(inst), setCount)
+end
+
+local function toolDestroyInstance(args)
+  local target = resolveTarget(args and args.target)
+  if not target then
+    return "ERROR: destroy_instance could not resolve target: " .. tostring(args and args.target)
+  end
+  if target == game then
+    return "ERROR: destroy_instance refuses to destroy the root DataModel."
+  end
+  local where = pathOf(target)
+  if not pcall(function() target:Destroy() end) then
+    return "ERROR: destroy failed for " .. where
+  end
+  return "DESTROYED: " .. where .. " (client-side only)"
+end
+
+local function toolApplyDraft(args)
+  local code = args and args.code
+  if type(code) ~= "string" or code == "" then
+    return "ERROR: apply_draft requires args.code (the complete draft source)."
+  end
+  pcall(function() editor.Text = code end)
+  pcall(function()
+    editorNote.Text = ("DRAFT WRITTEN BY PULSAR  •  %d chars  •  use CHECK to validate"):format(#code)
+    editorNote.TextColor3 = C.hot
+  end)
+  if args and (args.run == true or args.run == "true") then
+    local runResult = toolRunCode({ code = code })
+    return ("DRAFT APPLIED to the WORKSPACE tab (%d chars) and executed.\n%s"):format(#code, runResult)
+  end
+  return ("DRAFT APPLIED to the WORKSPACE tab (%d chars). The user can review and CHECK it there; call run_code to execute it."):format(#code)
+end
+
+local function toolClearConsole()
+  local removed = 0
+  pcall(function()
+    for _, child in ipairs(termOut:GetChildren()) do
+      if child:IsA("TextLabel") then child:Destroy() removed = removed + 1 end
+    end
+  end)
+  return ("CONSOLE CLEARED (%d lines removed)."):format(removed)
+end
+
 local PULSAR_TOOL_REGISTRY = {
   get_services = toolGetServices,
   get_content = toolGetContent,
@@ -2278,6 +2585,12 @@ local PULSAR_TOOL_REGISTRY = {
   get_draft = toolGetDraft,
   get_logs = toolGetLogs,
   get_dex_status = toolGetDexStatus,
+  run_code = toolRunCode,
+  set_property = toolSetProperty,
+  create_instance = toolCreateInstance,
+  destroy_instance = toolDestroyInstance,
+  apply_draft = toolApplyDraft,
+  clear_console = toolClearConsole,
 }
 
 local function pulsarExecuteTool(name, args)
@@ -2419,7 +2732,7 @@ local function getSelectionContext(userPrompt)
     return (buildTree(ws, nil, 15000))
   end)
   table.insert(parts, wsOk and wsTree or "Workspace tree unavailable.")
-  table.insert(parts, "Everything deeper (properties, other services, other trees) is fetched live with the TOOL CALL protocol described above (get_content, get_children, get_descendants, get_tree, find, get_selection, get_services, get_index, get_draft, get_logs, get_dex_status).")
+  table.insert(parts, "Everything deeper (properties, other services, other trees) is fetched live with the TOOL CALL protocol described above. Read tools: get_content, get_children, get_descendants, get_tree, find, get_selection, get_services, get_index, get_draft, get_logs, get_dex_status. Write tools (client-side only): run_code, set_property, create_instance, destroy_instance, apply_draft, clear_console. Runtime: Delta Executor on a live Roblox client; changes never replicate to the server.")
 
   return table.concat(parts, "\n\n")
 end
@@ -2467,7 +2780,7 @@ local function sendPulsar()
     -- Agentic loop: PULSAR may request live data with TOOL_CALL lines; the client
     -- executes the read-only tools here and feeds TOOL_RESULT blocks back until
     -- the model produces a final plain-text answer (or the round cap is reached).
-    local MAX_TOOL_ROUNDS = 6
+    local MAX_TOOL_ROUNDS = 8
     local round = 0
     while true do
       local ok, raw = pcall(pulsarRequest, "POST", PRIMEZ .. "api/ai/chat", {
@@ -2494,7 +2807,7 @@ local function sendPulsar()
           finalReply = "I inspected the game but reached the tool round limit before composing an answer. Please re-ask; I will use fewer, more targeted tool calls."
         end
         table.insert(conversation, { role = "assistant", content = finalReply })
-        while #conversation > 24 do table.remove(conversation, 1) end
+        while #conversation > 48 do table.remove(conversation, 1) end
         addChatMessage("PULSAR", finalReply)
         pzStatus.Text = "● PULSAR ONLINE"
         pzStatus.TextColor3 = C.good
@@ -2510,7 +2823,7 @@ local function sendPulsar()
       end
       resultParts[#resultParts + 1] = "Tool results above are live read-only facts from the client. Continue: emit more TOOL_CALL lines if needed, otherwise give the final answer as plain text with NO TOOL_CALL lines."
       table.insert(conversation, { role = "user", content = table.concat(resultParts, "\n\n") })
-      while #conversation > 24 do table.remove(conversation, 1) end
+      while #conversation > 48 do table.remove(conversation, 1) end
     end
     busy = false
     sendBtn.Text = "SEND"
@@ -2549,7 +2862,7 @@ clearBtn.MouseButton1Click:Connect(function()
   addChatMessage("PULSAR", "Conversation cleared. The shared inspection index will be refreshed automatically before your next message. Official site: https://primez-studios.onrender.com/")
 end)
 
-addChatMessage("PULSAR", "I'm PULSAR AI — your built-in PRIMEz TinyDex agent. I can read the game live myself: I see the full Workspace folder tree with every request, and I can inspect any instance, find parts by name, walk any folder tree, read your draft code, and check the console logs with my tools. Official PRIMEz site: https://primez-studios.onrender.com/ .")
+addChatMessage("PULSAR", "I'm PULSAR AI — your built-in PRIMEz TinyDex agent, running in the Delta Executor edition. I have full access: I see the full Workspace folder tree with every request, I can inspect any instance, find parts, walk any folder tree, read your draft code and console logs — and I can also run Luau code in your CONSOLE, set properties, create or destroy instances, and write and run your WORKSPACE draft. All changes are client-side only. Any code I show you appears as a card with a COPY button. Official PRIMEz site: https://primez-studios.onrender.com/ .")
 refreshPulsarStatus()
 task.spawn(function() pcall(rebuildInspectionIndex) end)
 
@@ -2558,4 +2871,5 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
