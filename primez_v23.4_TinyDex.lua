@@ -68,6 +68,11 @@
     is 90s instead of 45s so Render cold starts stop eating requests.
     Invented tool names now get told the real tool list so the agent
     self-corrects on the next step.
+  • v23.4.2 SPEED: the goal is a delivered script in under 5 minutes.
+    New SPEED RULES in the agent brain — finish in 8 steps or fewer, at
+    most ONE web search, summary analysis only, no narration between
+    steps. Status bar shows a live step + elapsed-time counter, and
+    history is trimmed tighter (28 messages) so requests stay fast.
   • GAME DETECTION: the game's real name is auto-detected (place info)
     and sent to PULSAR with EVERY request; new get_game_info tool.
   • SCRIPT WORKFLOW: for game-script requests PULSAR now follows:
@@ -3122,11 +3127,17 @@ AGENT WORKFLOW (follow strictly)
 6. REPORT: finish with a short summary — what you analyzed, what you built, whether it ran, output highlights, and how to stop or tweak it (e.g. a toggle the script exposes).
 
 GAME SCRIPT WORKFLOW (when the user asks for a script for THIS game)
-1. IDENTIFY the game: the CURRENT GAME name is in the context; call get_game_info if unsure.
-2. RESEARCH the internet with web_search: e.g. "<game name> script features", "<game name> auto steal script", "<game name> update". Learn what features and scripts exist for THIS game right now, then use that to decide what to build.
-3. ANALYZE the live game (analyze_game) to find the actual remotes/instances those features rely on.
-4. BUILD and EXECUTE as usual.
-SCRIPT TYPES users ask for: auto-steal (steal-style games), autofarm / auto-collect, auto-buy / shop, movement (speed, fly, infinite jump), teleport, ESP / visuals (players, items, bases), anti-AFK, GUI hub menus, remote tools, lag tools, and game-specific mixes. Research the game first and pick the feature set that matches it.
+1. IDENTIFY the game: the CURRENT GAME name is already in the context — do NOT call get_game_info for this, it is free information.
+2. RESEARCH (OPTIONAL, at most ONE web_search): a single "<game name> script features" search is enough. If it fails or looks slow, SKIP research entirely.
+3. ANALYZE the live game with analyze_game scope='summary' (go deep ONLY if the summary is clearly insufficient to build the script).
+4. BUILD and EXECUTE immediately after the analysis.
+SCRIPT TYPES users ask for: auto-steal (steal-style games), autofarm / auto-collect, auto-buy / shop, movement (speed, fly, infinite jump), teleport, ESP / visuals (players, items, bases), anti-AFK, GUI hub menus, remote tools, lag tools, and game-specific mixes. Pick the feature set that matches the request.
+
+SPEED RULES (the user's #1 requirement — a delivered script in under 5 minutes)
+- Every step is a model round trip and costs real time. FINISH IN 8 STEPS OR FEWER whenever possible.
+- LEAN PATH: (game name is free in context) → at most 1 web_search → 1 summary analyze → build → run_luau once → fix max 2 times → short report.
+- Do NOT narrate, restate plans, or summarize progress between steps. Tool calls only while working.
+- Do NOT verify with extra steps unless run_luau errored. A delivered working script beats a fully researched one — when in doubt, BUILD.
 
 SCRIPT RULES
 - Complete runnable Luau; correct service usage (game:GetService); wrap risky operations in pcall.
@@ -3220,7 +3231,8 @@ local function refreshPulsarStatus()
 end
 
 local function trimConversation()
-  while #conversation > 40 do table.remove(conversation, 1) end
+  -- v23.4.2: 40 → 28 messages — smaller payloads get faster model responses.
+  while #conversation > 28 do table.remove(conversation, 1) end
 end
 
 -- PERF: tool outputs can be huge (deep analyze_game / long terminal logs).
@@ -3237,8 +3249,11 @@ end
 -- ── The agent loop ──────────────────────────────────────────────────────
 local function runAgentTurn(userPrompt)
   local toolUses = 0
+  local t0 = os.clock()
   for step = 1, MAX_STEPS do
-    pzStatus.Text = ("● AGENT STEP %d/%d · tools used: %d · working..."):format(step, MAX_STEPS, toolUses)
+    -- v23.4.2: live elapsed timer so the user can see the 5-minute budget.
+    local elapsed = os.clock() - t0
+    pzStatus.Text = ("● STEP %d/%d · %d:%02d elapsed · tools: %d · working…"):format(step, MAX_STEPS, math.floor(elapsed / 60), math.floor(elapsed % 60), toolUses)
     -- v23.4.1: retry failed requests. The free-tier provider fails
     -- intermittently (rate limits / generic "Something went wrong" errors)
     -- and the Render server cold-starts after idle — one bad request used
@@ -3460,6 +3475,7 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
 
 
