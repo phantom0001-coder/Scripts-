@@ -73,6 +73,13 @@
     most ONE web search, summary analysis only, no narration between
     steps. Status bar shows a live step + elapsed-time counter, and
     history is trimmed tighter (28 messages) so requests stay fast.
+  • v23.4.3 FIX: status bar now has a live heartbeat (refreshes every
+    second, even mid-request — before, it froze at "STEP 1/24 · 0:00"
+    during long model waits and PULSAR looked dead). Messages typed
+    while PULSAR is working are QUEUED and auto-sent when the task
+    finishes instead of being silently swallowed. The agent brain is
+    forbidden from announcing a script without including the full code
+    in the same reply. AGENT DONE shows the total turn time.
   • GAME DETECTION: the game's real name is auto-detected (place info)
     and sent to PULSAR with EVERY request; new get_game_info tool.
   • SCRIPT WORKFLOW: for game-script requests PULSAR now follows:
@@ -3138,6 +3145,7 @@ SPEED RULES (the user's #1 requirement — a delivered script in under 5 minutes
 - LEAN PATH: (game name is free in context) → at most 1 web_search → 1 summary analyze → build → run_luau once → fix max 2 times → short report.
 - Do NOT narrate, restate plans, or summarize progress between steps. Tool calls only while working.
 - Do NOT verify with extra steps unless run_luau errored. A delivered working script beats a fully researched one — when in doubt, BUILD.
+- NEVER announce a script without delivering it: if you write "here is the script", the COMPLETE ```lua code MUST be in that SAME reply. Once you give your final answer the turn ENDS — you cannot add anything after it, so finish the whole task first.
 
 SCRIPT RULES
 - Complete runnable Luau; correct service usage (game:GetService); wrap risky operations in pcall.
@@ -3247,13 +3255,32 @@ local function clipForHistory(text)
 end
 
 -- ── The agent loop ──────────────────────────────────────────────────────
+-- v23.4.3: live heartbeat. The status line only refreshed BETWEEN steps, so
+-- during a long model request (up to 90s x 3 attempts) it froze at
+-- "STEP 1/24 - 0:00" and PULSAR looked dead while still working. This loop
+-- refreshes the status every second while a turn is active.
+local agentRuntime = { active = false, step = 0, stepT0 = 0, turnT0 = 0, tools = 0, note = "working…" }
+task.spawn(function()
+  while true do
+    if agentRuntime.active then
+      local el = os.clock() - agentRuntime.stepT0
+      pzStatus.Text = ("● STEP %d/%d · this step %d:%02d · tools: %d · %s"):format(
+        agentRuntime.step, MAX_STEPS, math.floor(el / 60), math.floor(el % 60), agentRuntime.tools, agentRuntime.note)
+      pzStatus.TextColor3 = C.dim
+    end
+    task.wait(1)
+  end
+end)
+
 local function runAgentTurn(userPrompt)
   local toolUses = 0
-  local t0 = os.clock()
   for step = 1, MAX_STEPS do
-    -- v23.4.2: live elapsed timer so the user can see the 5-minute budget.
-    local elapsed = os.clock() - t0
-    pzStatus.Text = ("● STEP %d/%d · %d:%02d elapsed · tools: %d · working…"):format(step, MAX_STEPS, math.floor(elapsed / 60), math.floor(elapsed % 60), toolUses)
+    agentRuntime.active = true
+    agentRuntime.step = step
+    agentRuntime.stepT0 = os.clock()
+    if step == 1 then agentRuntime.turnT0 = agentRuntime.stepT0 end
+    agentRuntime.tools = toolUses
+    agentRuntime.note = "working…"
     -- v23.4.1: retry failed requests. The free-tier provider fails
     -- intermittently (rate limits / generic "Something went wrong" errors)
     -- and the Render server cold-starts after idle — one bad request used
@@ -3261,8 +3288,7 @@ local function runAgentTurn(userPrompt)
     local ok, raw = false, nil
     for attempt = 1, 3 do
       if attempt > 1 then
-        pzStatus.Text = ("● Attempt %d/3 — retrying after request error…"):format(attempt)
-        pzStatus.TextColor3 = C.dim
+        agentRuntime.note = ("retrying after request error (attempt %d/3)…"):format(attempt)
         task.wait(attempt == 2 and 3 or 6)
       end
       ok, raw = pcall(pulsarRequest, "POST", PRIMEZ .. "api/ai/chat", {
@@ -3276,6 +3302,7 @@ local function runAgentTurn(userPrompt)
     end
     if not ok then
       addChatMessage("CONNECTION ERROR", tostring(raw) .. "\n\n3 attempts failed. If the PRIMEz server was idle (free-tier cold start), wait ~1 minute, then say 'continue' — I'll resume exactly where I stopped.", true)
+      agentRuntime.active = false
       pzStatus.Text = "● Request failed (3 attempts)"
       pzStatus.TextColor3 = C.bad
       return false
@@ -3384,20 +3411,35 @@ local function runAgentTurn(userPrompt)
         conversation[#conversation + 1] = { role = "assistant", content = reply }
         trimConversation()
         renderReply(reply)
-        pzStatus.Text = ("● AGENT DONE · %d tool uses · ready"):format(toolUses)
+        agentRuntime.active = false
+        local turnSecs = math.floor(os.clock() - agentRuntime.turnT0)
+        pzStatus.Text = ("● AGENT DONE · %d tool uses · %d:%02d · ready"):format(toolUses, math.floor(turnSecs / 60), turnSecs % 60)
         pzStatus.TextColor3 = C.good
         return true
       end
     end
   end
   addChatMessage("PULSAR", ("I used all %d automatic agent steps this turn and the task is still not finished. Say 'continue' and I will pick up exactly where I stopped and finish it."):format(MAX_STEPS))
+  agentRuntime.active = false
   pzStatus.Text = "● Step budget used — say continue"
   pzStatus.TextColor3 = C.dim
   return true
 end
 
+local pendingPrompt = nil
 local function sendPulsar()
-  if busy then return end
+  if busy then
+    -- v23.4.3: messages typed while PULSAR is working were silently
+    -- swallowed (looked dead). Queue them instead and auto-send when the
+    -- current task finishes.
+    local queued = promptBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    if queued ~= "" then
+      pendingPrompt = queued
+      promptBox.Text = ""
+      flash("queued — PULSAR will run it when the current task finishes", C.dim)
+    end
+    return
+  end
   local prompt = promptBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
   if prompt == "" then return end
   promptBox.Text = ""
@@ -3409,9 +3451,18 @@ local function sendPulsar()
   task.spawn(function()
     local ok = pcall(runAgentTurn, prompt)
     if not ok then addChatMessage("AGENT ERROR", "The agent loop crashed unexpectedly.", true) end
+    agentRuntime.active = false
     busy = false
     sendBtn.Text = "SEND"
     sendBtn.AutoButtonColor = true
+    -- v23.4.3: auto-send the queued message (if any) now that we're free.
+    if pendingPrompt then
+      local nextPrompt = pendingPrompt
+      pendingPrompt = nil
+      task.wait(0.5)
+      promptBox.Text = nextPrompt
+      sendPulsar()
+    end
   end)
 end
 
@@ -3475,6 +3526,7 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
 
 
