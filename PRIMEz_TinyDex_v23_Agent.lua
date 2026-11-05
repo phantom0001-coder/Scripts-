@@ -30,7 +30,7 @@
       messages = {
         { role = "user",      content = "..." },
         { role = "assistant", content = "..." },
-        { role = "tool", tool_call_id = "...", name = "...", content = "<result>" },
+        { role = "tool", tool_call_id = "...", name = "...", arguments = <args table>, content = "<result>" },
       },
     }
   response body, one of:
@@ -2961,6 +2961,7 @@ local function runAgentTurn(userPrompt)
           role = "tool",
           tool_call_id = callId,
           name = name,
+          arguments = args,
           content = tostring(result.output),
         }
         -- Auto-run companion: if the agent wrote a script but only saved it as
@@ -2974,6 +2975,7 @@ local function runAgentTurn(userPrompt)
               role = "tool",
               tool_call_id = callId .. "_autorun",
               name = "run_luau",
+              arguments = { code = (#draft > 6000) and (draft:sub(1, 6000) .. "\n--[[ code truncated for history ]]") or draft },
               content = ("AUTO-RUN of saved draft — EXEC %s in %d ms\n%s"):format(
                 runResult.ok and "OK" or "FAILED", runResult.duration or 0, runResult.output),
             }
@@ -3024,6 +3026,7 @@ local function runAgentTurn(userPrompt)
             role = "tool",
             tool_call_id = callId,
             name = name,
+            arguments = args,
             content = tostring(result.output),
           }
         end
@@ -3122,4 +3125,5 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
