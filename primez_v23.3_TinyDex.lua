@@ -47,6 +47,9 @@
   • Drag = move the button; quick tap = toggle the window (same as before).
   • The button is live-clamped while dragging: it always stays fully
     visible on screen and can never get lost off-screen.
+  • v23.3.1 FIX: tapping P to show the window no longer drifts it into a
+    corner. The window re-centers ONLY if part of it is off-screen; a
+    valid position is never rewritten.
 
   ── BACKEND CONTRACT — POST {PRIMEZ}/api/ai/chat ─────────────────────────
   request body:
@@ -311,15 +314,20 @@ pBtn.InputEnded:Connect(function(i)
     -- quick tap: toggle the window
     win.Visible = not win.Visible
     if win.Visible then
-      -- snap the window fully back on screen when shown, so it can never be
-      -- stuck outside the viewport or impossible to grab again
+      -- v23.3.1 FIX: the old snap code read the window position before the
+      -- layout refreshed and wrote offsets that ignored the window's center
+      -- anchor — every show drifted the window until it landed in a corner
+      -- where its title bar (the only drag handle) was unreachable. Now:
+      -- wait one frame for fresh layout, and re-center the window ONLY if
+      -- any part of it is off-screen. On-screen positions are untouched.
+      task.wait()
       local cam = workspace.CurrentCamera
       local vp = cam and cam.ViewportSize or Vector2.new(1920, 1080)
       local pos, size = win.AbsolutePosition, win.AbsoluteSize
-      local nx = math.clamp(pos.X, 4, math.max(4, vp.X - size.X - 4))
-      local ny = math.clamp(pos.Y, 4, math.max(4, vp.Y - size.Y - 4))
-      if nx ~= pos.X or ny ~= pos.Y then
-        win.Position = UDim2.new(0, nx, 0, ny)
+      local offScreen = pos.X < -12 or pos.Y < -12
+        or (pos.X + size.X) > (vp.X + 12) or (pos.Y + size.Y) > (vp.Y + 12)
+      if offScreen then
+        win.Position = UDim2.fromScale(0.5, 0.5)
       end
     end
   end
@@ -3261,6 +3269,7 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
 
 
