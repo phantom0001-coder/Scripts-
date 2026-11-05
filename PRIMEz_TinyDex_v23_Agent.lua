@@ -20,6 +20,18 @@
   • FIXES v22 BUG: raw tool_calls JSON leaking into the chat is now parsed
     and executed (or cleanly reported) instead of being displayed as text.
 
+  WHAT'S NEW IN v23.1 (PERF PATCH)
+  • No boot-time full-game index build — it froze big games (laggy movement,
+    crashes). The index now builds lazily via SYNC DATA or deep analyze_game.
+  • Index builder is capped (4000 instances / 2s CPU budget), yields every 10
+    instances, and caps per-instance child lists — labeled CAPPED when partial.
+  • MAX_STEPS 40 → 8 (the documented limit). A turn can no longer spiral into
+    dozens of chained model requests.
+  • Tool results are clipped to 6k chars in agent history — requests stay
+    small and fast instead of dragging megabytes through every step.
+  • search_game and the analyze_game remote scan cap their work per service
+    and yield mid-scan.
+
   ── BACKEND CONTRACT — POST {PRIMEZ}/api/ai/chat ─────────────────────────
   request body:
     {
@@ -701,7 +713,13 @@ local function rebuildInspectionIndex()
     end
   end
 
+  -- PERF: hard caps + CPU budget so big games can't freeze the client or
+  -- balloon memory (v23.1). Index is built lazily, never at boot.
+  local INDEX_MAX_INSTANCES = 4000
+  local INDEX_CPU_BUDGET = 2.0
+  local buildStartClock = os.clock()
   local count = 0
+  local stoppedWhy = nil
   while #stack > 0 do
     local inst = table.remove(stack)
     if inst and inst ~= gui and not seen[inst] then
@@ -743,10 +761,11 @@ local function rebuildInspectionIndex()
       end
 
       local childParts = {}
-      for i = 1, #children do
+      for i = 1, math.min(#children, 12) do
         local child = children[i]
         childParts[#childParts + 1] = tostring(child.Name) .. "<" .. tostring(child.ClassName) .. ">"
       end
+      if #children > 12 then childParts[#childParts + 1] = ("…(+%d more)"):format(#children - 12) end
       if #childParts > 0 then entry[#entry + 1] = "DIRECT CHILDREN: " .. table.concat(childParts, ", ") end
 
       lines[#lines + 1] = table.concat(entry, "\n")
@@ -758,21 +777,24 @@ local function rebuildInspectionIndex()
         end
       end
 
-      if count % 40 == 0 then task.wait() end
+      if count % 10 == 0 then task.wait() end
+      if count >= INDEX_MAX_INSTANCES then stoppedWhy = "instance cap reached" break end
+      if os.clock() - buildStartClock > INDEX_CPU_BUDGET then stoppedWhy = "cpu budget reached" break end
     end
   end
 
   inspectionIndexCount = count
-  inspectionIndexTruncated = false
+  inspectionIndexTruncated = stoppedWhy ~= nil
   inspectionIndexRevision += 1
   inspectionIndexCache = table.concat(lines, "\n")
-    .. ("\nINDEX SUMMARY: %d instances indexed; revision %d; full complete unconstrained index."):format(
-      count, inspectionIndexRevision
+    .. ("\nINDEX SUMMARY: %d instances indexed; revision %d; %s"):format(
+      count, inspectionIndexRevision,
+      stoppedWhy and ("PARTIAL — stopped: " .. stoppedWhy .. ". Use search_game/inspect for anything not listed.") or "complete index."
     )
   inspectionIndexDirty = inspectionIndexEpoch ~= buildEpoch
   if indexInfo then
-    indexInfo.Text = ("INDEX %d · REV %d · FULL"):format(
-      inspectionIndexCount, inspectionIndexRevision
+    indexInfo.Text = ("INDEX %d · REV %d · %s"):format(
+      inspectionIndexCount, inspectionIndexRevision, stoppedWhy and "CAPPED" or "FULL"
     )
     indexInfo.TextColor3 = inspectionIndexDirty and C.dim or C.good
   end
@@ -2152,7 +2174,11 @@ local function buildGameAnalysis(scope)
   for _, service in ipairs(game:GetChildren()) do
     local ok, descendants = pcall(function() return service:GetDescendants() end)
     if ok and type(descendants) == "table" then
+      local scannedHere = 0
       for _, inst in ipairs(descendants) do
+        scannedHere += 1
+        if scannedHere % 2000 == 0 then task.wait() end
+        if scannedHere > 20000 then break end -- PERF: per-service scan cap
         if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
           remoteCount += 1
           if remoteCount <= 150 then
@@ -2306,6 +2332,8 @@ AGENT_TOOLS.search_game = {
       if ok and type(descendants) == "table" then
         for _, inst in ipairs(descendants) do
           scanned += 1
+          if scanned % 2000 == 0 then task.wait() end
+          if scanned >= 20000 then break end -- PERF: per-service scan cap
           if #results < 120 then
             local name = tostring(inst.Name):lower()
             local className = tostring(inst.ClassName):lower()
@@ -2549,7 +2577,7 @@ end
 local conversation = {}
 local includeSelection = true
 local busy = false
-local MAX_STEPS = 40
+local MAX_STEPS = 8
 
 local function scrollFeed()
   task.defer(function()
@@ -2914,6 +2942,17 @@ local function trimConversation()
   while #conversation > 40 do table.remove(conversation, 1) end
 end
 
+-- PERF: tool outputs can be huge (deep analyze_game / long terminal logs).
+-- Cap what goes into history so every later agent request stays small and
+-- fast (free providers choke on megabyte payloads; also respects the 2mb limit).
+local HISTORY_TOOL_RESULT_LIMIT = 6000
+local function clipForHistory(text)
+  text = tostring(text or "")
+  if #text <= HISTORY_TOOL_RESULT_LIMIT then return text end
+  return text:sub(1, HISTORY_TOOL_RESULT_LIMIT)
+    .. ("\n…[TRUNCATED for history: first %d of %d chars kept]"):format(HISTORY_TOOL_RESULT_LIMIT, #text)
+end
+
 -- ── The agent loop ──────────────────────────────────────────────────────
 local function runAgentTurn(userPrompt)
   local toolUses = 0
@@ -2962,7 +3001,7 @@ local function runAgentTurn(userPrompt)
           tool_call_id = callId,
           name = name,
           arguments = args,
-          content = tostring(result.output),
+          content = clipForHistory(result.output),
         }
         -- Auto-run companion: if the agent wrote a script but only saved it as
         -- a draft while AUTO-RUN is ON, run it through the terminal as well.
@@ -2976,8 +3015,8 @@ local function runAgentTurn(userPrompt)
               tool_call_id = callId .. "_autorun",
               name = "run_luau",
               arguments = { code = (#draft > 6000) and (draft:sub(1, 6000) .. "\n--[[ code truncated for history ]]") or draft },
-              content = ("AUTO-RUN of saved draft — EXEC %s in %d ms\n%s"):format(
-                runResult.ok and "OK" or "FAILED", runResult.duration or 0, runResult.output),
+              content = clipForHistory(("AUTO-RUN of saved draft — EXEC %s in %d ms\n%s"):format(
+                runResult.ok and "OK" or "FAILED", runResult.duration or 0, runResult.output)),
             }
           end
         end
@@ -3004,7 +3043,7 @@ local function runAgentTurn(userPrompt)
           local summary = tostring(result.output or ""):gsub("[\r\n]+", " ")
           if #summary > 90 then summary = summary:sub(1, 90) .. "…" end
           addToolChip(call.name, summary, result.ok)
-          parts[#parts + 1] = ("TOOL_RESULT %s (%s)\n%s"):format(call.id, call.name, tostring(result.output))
+          parts[#parts + 1] = ("TOOL_RESULT %s (%s)\n%s"):format(call.id, call.name, clipForHistory(result.output))
         end
         parts[#parts + 1] = "Tool results above are live facts from the client. Continue: emit more TOOL_CALL lines if needed, otherwise give the final answer as plain text with NO TOOL_CALL lines."
         conversation[#conversation + 1] = { role = "assistant", content = reply }
@@ -3027,7 +3066,7 @@ local function runAgentTurn(userPrompt)
             tool_call_id = callId,
             name = name,
             arguments = args,
-            content = tostring(result.output),
+            content = clipForHistory(result.output),
           }
         end
         trimConversation()
@@ -3118,12 +3157,15 @@ end)
 addChatMessage("PULSAR", "I'm PULSAR AGENT — TinyDex v23 Full Scripts Client. I can analyze this whole game (services, characters, remotes, UI), write complete Luau scripts for what you need, and EXECUTE them in the terminal automatically. Execution: "
   .. (Terminal.available and "AVAILABLE (loadstring detected)" or "unavailable in this runtime (Studio-safe mode)") .. ". Describe what you want built and I'll get to work.")
 refreshPulsarStatus()
-task.spawn(function() pcall(rebuildInspectionIndex) end)
+-- v23.1 PERF: no boot-time full-game index build (it froze big games and
+-- caused crashes). The index builds lazily via the SYNC DATA button or the
+-- first deep analyze_game — always capped and yielding.
 
 gotoTab("Props")
 safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
 
