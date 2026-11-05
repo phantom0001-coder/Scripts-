@@ -63,6 +63,11 @@
   • WEB RESEARCH: new web_search tool — PULSAR searches the internet
     (DuckDuckGo, client-side via executor HTTP, no backend change) for
     the game's current scripts, features, updates and meta.
+  • v23.4.1 FIX: failed AI requests no longer kill the whole turn — each
+    step retries up to 3 times (waits in between), and the HTTP timeout
+    is 90s instead of 45s so Render cold starts stop eating requests.
+    Invented tool names now get told the real tool list so the agent
+    self-corrects on the next step.
   • GAME DETECTION: the game's real name is auto-detected (place info)
     and sent to PULSAR with EVERY request; new get_game_info tool.
   • SCRIPT WORKFLOW: for game-script requests PULSAR now follows:
@@ -2199,7 +2204,10 @@ local function pulsarRequest(method, url, body)
     Method = method,
     Headers = { ["Content-Type"] = "application/json", ["Accept"] = "application/json" },
   }
-  pcall(function() options.TimeOut = 45 end)
+  -- v23.4.1: 45 → 90 seconds. Render free-tier cold starts (~30-50s) plus a
+  -- slow model request regularly exceeded 45s and the turn died with
+  -- "Request failed" mid-task.
+  pcall(function() options.TimeOut = 90 end)
   if body ~= nil then options.Body = HttpService:JSONEncode(body) end
   local response = req(options)
   if type(response) ~= "table" then error("Unexpected HTTP response.") end
@@ -2811,7 +2819,12 @@ table.sort(TOOL_SCHEMAS, function(a, b) return a.name < b.name end)
 local function dispatchTool(name, args)
   local def = AGENT_TOOLS[name]
   if not def then
-    return { ok = false, output = ("unknown tool '%s'"):format(tostring(name)) }
+    -- v23.4.1: weak models sometimes invent tool names (e.g. pul_search_info).
+    -- Tell them exactly which tools are real so the next step corrects itself.
+    local names = {}
+    for realName in pairs(AGENT_TOOLS) do names[#names + 1] = realName end
+    table.sort(names)
+    return { ok = false, output = ("unknown tool '%s'. These are the ONLY real tools: %s. Re-issue the task using one of these."):format(tostring(name), table.concat(names, ", ")) }
   end
   if type(args) == "string" then
     local okDecode, decoded = pcall(function() return HttpService:JSONDecode(args) end)
@@ -3226,16 +3239,29 @@ local function runAgentTurn(userPrompt)
   local toolUses = 0
   for step = 1, MAX_STEPS do
     pzStatus.Text = ("● AGENT STEP %d/%d · tools used: %d · working..."):format(step, MAX_STEPS, toolUses)
-    local ok, raw = pcall(pulsarRequest, "POST", PRIMEZ .. "api/ai/chat", {
-      agent = true,
-      step = step,
-      tools = TOOL_SCHEMAS,
-      context = buildContext(userPrompt),
-      messages = conversation,
-    })
+    -- v23.4.1: retry failed requests. The free-tier provider fails
+    -- intermittently (rate limits / generic "Something went wrong" errors)
+    -- and the Render server cold-starts after idle — one bad request used
+    -- to kill the whole turn. Now: 3 attempts with waits between them.
+    local ok, raw = false, nil
+    for attempt = 1, 3 do
+      if attempt > 1 then
+        pzStatus.Text = ("● Attempt %d/3 — retrying after request error…"):format(attempt)
+        pzStatus.TextColor3 = C.dim
+        task.wait(attempt == 2 and 3 or 6)
+      end
+      ok, raw = pcall(pulsarRequest, "POST", PRIMEZ .. "api/ai/chat", {
+        agent = true,
+        step = step,
+        tools = TOOL_SCHEMAS,
+        context = buildContext(userPrompt),
+        messages = conversation,
+      })
+      if ok then break end
+    end
     if not ok then
-      addChatMessage("CONNECTION ERROR", tostring(raw), true)
-      pzStatus.Text = "● Request failed"
+      addChatMessage("CONNECTION ERROR", tostring(raw) .. "\n\n3 attempts failed. If the PRIMEz server was idle (free-tier cold start), wait ~1 minute, then say 'continue' — I'll resume exactly where I stopped.", true)
+      pzStatus.Text = "● Request failed (3 attempts)"
       pzStatus.TextColor3 = C.bad
       return false
     end
@@ -3434,6 +3460,7 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
 
 
