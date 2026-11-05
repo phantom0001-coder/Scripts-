@@ -50,6 +50,11 @@
   • v23.3.1 FIX: tapping P to show the window no longer drifts it into a
     corner. The window re-centers ONLY if part of it is off-screen; a
     valid position is never rewritten.
+  • v23.3.2 FIX: P taps now use the Activated event. On mobile, InputEnded
+    could miss the button when the finger lifted slightly off it — P then
+    looked dead and the drag state could stick, making the button follow
+    the next touch. Drag state is now cleaned up globally and a finished
+    drag suppresses the tap for 0.35s, so drags never toggle the window.
 
   ── BACKEND CONTRACT — POST {PRIMEZ}/api/ai/chat ─────────────────────────
   request body:
@@ -304,31 +309,43 @@ UIS.InputChanged:Connect(function(i)
     end
   end
 end)
-pBtn.InputEnded:Connect(function(i)
+-- v23.3.2 FIX: InputEnded on a small button is unreliable on mobile — if the
+-- finger lifts slightly off the button it never fires, so P looked dead and
+-- pDragging stayed stuck (the button then followed the next touch). Taps
+-- now use the Activated event (fires reliably on release over the button,
+-- never fires on a drag-away), and a GLOBAL InputEnded clears drag state and
+-- suppresses the tap for 0.35s after any drag so a drag that ends on the
+-- button can't accidentally toggle the window.
+local pSuppressTapUntil = 0
+UIS.InputEnded:Connect(function(i)
   if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-    pDragging = false
-    if pMoved then
-      pMoved = false
-      return -- it was a drag, not a tap
-    end
-    -- quick tap: toggle the window
-    win.Visible = not win.Visible
-    if win.Visible then
-      -- v23.3.1 FIX: the old snap code read the window position before the
-      -- layout refreshed and wrote offsets that ignored the window's center
-      -- anchor — every show drifted the window until it landed in a corner
-      -- where its title bar (the only drag handle) was unreachable. Now:
-      -- wait one frame for fresh layout, and re-center the window ONLY if
-      -- any part of it is off-screen. On-screen positions are untouched.
-      task.wait()
-      local cam = workspace.CurrentCamera
-      local vp = cam and cam.ViewportSize or Vector2.new(1920, 1080)
-      local pos, size = win.AbsolutePosition, win.AbsoluteSize
-      local offScreen = pos.X < -12 or pos.Y < -12
-        or (pos.X + size.X) > (vp.X + 12) or (pos.Y + size.Y) > (vp.Y + 12)
-      if offScreen then
-        win.Position = UDim2.fromScale(0.5, 0.5)
+    if pDragging then
+      pDragging = false
+      if pMoved then
+        pMoved = false
+        pSuppressTapUntil = time() + 0.35
       end
+    end
+  end
+end)
+pBtn.Activated:Connect(function()
+  if time() < pSuppressTapUntil then return end
+  win.Visible = not win.Visible
+  if win.Visible then
+    -- v23.3.1 FIX: the old snap code read the window position before the
+    -- layout refreshed and wrote offsets that ignored the window's center
+    -- anchor — every show drifted the window until it landed in a corner
+    -- where its title bar (the only drag handle) was unreachable. Now:
+    -- wait one frame for fresh layout, and re-center the window ONLY if
+    -- any part of it is off-screen. On-screen positions are untouched.
+    task.wait()
+    local cam = workspace.CurrentCamera
+    local vp = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+    local pos, size = win.AbsolutePosition, win.AbsoluteSize
+    local offScreen = pos.X < -12 or pos.Y < -12
+      or (pos.X + size.X) > (vp.X + 12) or (pos.Y + size.Y) > (vp.Y + 12)
+    if offScreen then
+      win.Position = UDim2.fromScale(0.5, 0.5)
     end
   end
 end)
@@ -3269,6 +3286,7 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
 
 
