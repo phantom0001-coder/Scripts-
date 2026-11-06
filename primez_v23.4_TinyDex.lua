@@ -80,6 +80,15 @@
     finishes instead of being silently swallowed. The agent brain is
     forbidden from announcing a script without including the full code
     in the same reply. AGENT DONE shows the total turn time.
+  • v23.4.4 FOCUS: PULSAR is a SCRIPT BUILDER, judged only by whether
+    the delivered script actually RUNS. New WORKING SCRIPT STANDARD in
+    the brain (a script "works" only after run_luau returns EXEC OK,
+    fix up to 3 attempts, final report states SCRIPT RUNNING ✓/✗ plus
+    how to stop it) and anti-random rules (no tutorials, no "here are
+    ideas", no off-topic chatter when a script was requested).
+    Mechanical guarantee: after the final reply, the delivered script's
+    largest lua block is auto-executed and reported EXEC OK / FAILED —
+    a broken script can never be passed off as working.
   • GAME DETECTION: the game's real name is auto-detected (place info)
     and sent to PULSAR with EVERY request; new get_game_info tool.
   • SCRIPT WORKFLOW: for game-script requests PULSAR now follows:
@@ -3109,7 +3118,7 @@ end
 -- ── System context (agentic product knowledge) ─────────────────────────
 local PULSAR_SYSTEM = [[
 IDENTITY
-You are PULSAR AGENT, the built-in AI agent of PRIMEz Studios TinyDex v23 (Full Scripts Client). You are not a chatbot: you have REAL tools that act on the live client, and the user expects finished, working, EXECUTED scripts — not instructions.
+You are PULSAR AGENT, the built-in AI SCRIPT BUILDER of PRIMEz Studios TinyDex v23 (Full Scripts Client). You are not a chatbot and not a tutor: you are a script BUILDER, judged ONLY by whether the scripts you deliver actually RUN in the live game. Analysis and research are only means to that end — the finished product is a working, EXECUTED script.
 
 OFFICIAL PRIMEz REFERENCE
 PRIMEz Studios: https://primez-studios.onrender.com/
@@ -3146,6 +3155,14 @@ SPEED RULES (the user's #1 requirement — a delivered script in under 5 minutes
 - Do NOT narrate, restate plans, or summarize progress between steps. Tool calls only while working.
 - Do NOT verify with extra steps unless run_luau errored. A delivered working script beats a fully researched one — when in doubt, BUILD.
 - NEVER announce a script without delivering it: if you write "here is the script", the COMPLETE ```lua code MUST be in that SAME reply. Once you give your final answer the turn ENDS — you cannot add anything after it, so finish the whole task first.
+
+WORKING SCRIPT STANDARD (how you are judged)
+- You are judged ONLY by whether the delivered script RUNS. Not by research quality, not by explanation length.
+- A script "works" ONLY after run_luau returns EXEC OK. Before that it is UNVERIFIED — never call it working.
+- If run_luau fails, FIX the code and run again — up to 3 attempts. Only give up after 3 real failures, and then say exactly what error you could not fix.
+- Your FINAL reply must state: SCRIPT RUNNING ✓ or ✗, and how to toggle/stop the script (e.g. a keybind or button it creates).
+- NO RANDOM OUTPUT: when a script was requested, do NOT reply with tutorials, "here are some ideas", safety lectures, general game info, or multi-topic answers. Either build and deliver the script, or state precisely what evidence you still need to build it.
+- Stay ON-TARGET: if the user asked for auto-steal, deliver auto-steal. Do not add unrelated features the user never asked for.
 
 SCRIPT RULES
 - Complete runnable Luau; correct service usage (game:GetService); wrap risky operations in pcall.
@@ -3411,6 +3428,40 @@ local function runAgentTurn(userPrompt)
         conversation[#conversation + 1] = { role = "assistant", content = reply }
         trimConversation()
         renderReply(reply)
+        -- v23.4.4: mechanical guarantee — if the final reply delivered lua
+        -- code and auto-run + exec are ON, execute the largest block and
+        -- report EXEC OK/FAILED, so the user always knows if it really runs.
+        if AGENT_PERMISSIONS.autoRun and AGENT_PERMISSIONS.execution then
+          local blocks, pos = {}, 1
+          while true do
+            local a = reply:find("```", pos, true)
+            if not a then break end
+            local b = reply:find("```", a + 3, true)
+            if not b then break end
+            local code = reply:sub(a + 3, b - 1)
+            local nl = code:find("\n", 1, true)
+            local first = nl and code:sub(1, nl - 1) or ""
+            local lang = first:match("^%s*(%a+)")
+            if lang and (lang:lower() == "lua" or lang:lower() == "luau") then
+              code = nl and code:sub(nl + 1) or code
+            end
+            code = code:gsub("^%s*\n", ""):gsub("\n%s*$", "")
+            if code:match("%S") then blocks[#blocks + 1] = code end
+            pos = b + 3
+          end
+          if #blocks > 0 then
+            local best = blocks[1]
+            for i = 2, #blocks do
+              if #blocks[i] > #best then best = blocks[i] end
+            end
+            local result = Terminal.exec(best, "PULSAR delivery check")
+            if result.ok then
+              addChatMessage("PULSAR", "✅ DELIVERED SCRIPT RUNNING — auto-executed the final script (" .. #best .. " chars, " .. result.duration .. " ms). Use the script's own toggle/keybind to stop it, or re-run it to clean up.")
+            else
+              addChatMessage("PULSAR", "❌ DELIVERED SCRIPT FAILED — " .. tostring(result.output):sub(1, 200))
+            end
+          end
+        end
         agentRuntime.active = false
         local turnSecs = math.floor(os.clock() - agentRuntime.turnT0)
         pzStatus.Text = ("● AGENT DONE · %d tool uses · %d:%02d · ready"):format(toolUses, math.floor(turnSecs / 60), turnSecs % 60)
@@ -3526,6 +3577,7 @@ safe("props", refreshProps)
 safe("render", render)
 safe("view", buildView, nil)
 flash("ready", C.dim)
+
 
 
 
