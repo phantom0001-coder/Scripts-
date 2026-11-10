@@ -1,4 +1,4 @@
-# ⚡ PRIMEz Reverser
+# ⚡ PrimeZ R.E.L (Reverse Engineering Layer)
 
 > **Autonomous Lua & Luau Reverse Engineering Engine and Discord Bot**  
 > Developed for the **PRIMEz Suite** to deobfuscate, analyze, and devirtualize protected Roblox / Lua scripts.
@@ -71,7 +71,7 @@ python primez_cli.py --detect script.lua
 ## 📁 Repository Layout
 
 ```text
-PRIMEz-Reverser/
+PrimeZ-R.E.L/
 ├── bin/                 # Luau execution & AST binaries
 ├── bot/                 # Discord Bot, UI components & slash commands
 ├── core/                # Central engine, detector & security sanitizer

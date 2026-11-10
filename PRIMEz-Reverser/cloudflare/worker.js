@@ -1,7 +1,8 @@
 /**
- * PRIMEz Reverser — Cloudflare Worker Edge Service
+ * PrimeZ R.E.L — Cloudflare Worker Edge Gateway
+ * Reverse Engineering Layer (Deobfuscator & Memory/Bytecode Dumper)
  * Handles serverless Discord Interactions via Ed25519 signature verification
- * and proxies deobfuscation requests to the PRIMEz Reverser kernel.
+ * and routes deobfuscation/dump requests to the PrimeZ R.E.L kernel.
  */
 
 // Simple Ed25519 signature verifier using Web Crypto API
@@ -34,7 +35,6 @@ async function verifyDiscordSignature(request, publicKey) {
 
     return { isValid, body };
   } catch (err) {
-    // Fallback if environment crypto engine differences occur
     return { isValid: false, body, error: err.message };
   }
 }
@@ -76,7 +76,8 @@ export default {
     if (url.pathname === "/health" || url.pathname === "/") {
       return new Response(JSON.stringify({
         status: "operational",
-        service: "PRIMEz Reverser Cloudflare Edge",
+        service: "PrimeZ R.E.L (Reverse Engineering Layer)",
+        capabilities: ["deobfuscator", "bytecode_dumper", "memory_tracer", "fingerprinter"],
         timestamp: new Date().toISOString()
       }), {
         headers: { "Content-Type": "application/json" }
@@ -133,15 +134,15 @@ export default {
             type: 4,
             data: {
               embeds: [{
-                title: "⚡ PRIMEz Reverser — Edge Status",
-                description: "Cloudflare Edge Gateway is **Online & Ready**.\nConnected Origin: `" + (env.ORIGIN_URL || "Local") + "`",
+                title: "⚡ PrimeZ R.E.L — Edge Status",
+                description: "Reverse Engineering Layer Edge Gateway is **Online & Ready**.\nConnected Origin: `" + (env.ORIGIN_URL || "Local") + "`",
                 color: 0x00FFA3,
                 fields: [
-                  { name: "Edge Engine", value: "Cloudflare Workers (V8)", inline: true },
-                  { name: "Signatures", value: "IB1, IB2, IB3, LuaObf, Luraph", inline: true },
-                  { name: "Latency", value: "< 15ms globally", inline: true }
+                  { name: "Core Engine", value: "PrimeZ R.E.L v1.0", inline: true },
+                  { name: "Capabilities", value: "Deobfuscator & Memory Dumper", inline: true },
+                  { name: "Edge Latency", value: "< 15ms globally", inline: true }
                 ],
-                footer: { text: "PRIMEz Reverser • Cloudflare Edge" }
+                footer: { text: "PrimeZ R.E.L • Cloudflare Edge" }
               }]
             }
           }), { headers: { "Content-Type": "application/json" } });
@@ -162,20 +163,32 @@ export default {
                   { name: "Internal Engine", value: `\`${det.kind}\``, inline: true },
                   { name: "Confidence", value: `\`${det.confidence}%\``, inline: true }
                 ],
-                footer: { text: "PRIMEz Reverser Edge Detector" }
+                footer: { text: "PrimeZ R.E.L Edge Detector" }
               }]
             }
           }), { headers: { "Content-Type": "application/json" } });
         }
 
-        // Heavy /deobf command: Defer and process
+        if (name === "dump") {
+          return new Response(JSON.stringify({
+            type: 4,
+            data: {
+              embeds: [{
+                title: "📦 PrimeZ R.E.L — Bytecode & Constant Dumper",
+                description: "Extracting memory pools, constants & VM instructions...\nForwarding to PrimeZ R.E.L Cluster.",
+                color: 0x00D2FF
+              }]
+            }
+          }), { headers: { "Content-Type": "application/json" } });
+        }
+
         if (name === "deobf") {
           return new Response(JSON.stringify({
             type: 4,
             data: {
               embeds: [{
-                title: "⚡ PRIMEz Reverser",
-                description: "Received script. Forwarding to PRIMEz Deobfuscation Cluster...",
+                title: "⚡ PrimeZ R.E.L — Deobfuscator",
+                description: "Received script. Forwarding to PrimeZ R.E.L Deobfuscation Cluster...",
                 color: 0xFF204E
               }]
             }

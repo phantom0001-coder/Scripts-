@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-PRIMEz Reverser — Command Line Interface
-High-performance deobfuscation and analysis suite for Lua and Luau.
+PrimeZ R.E.L — Command Line Interface
+Reverse Engineering Layer (Deobfuscator & Memory/Bytecode Dumper) for Lua and Luau.
 """
 
 import argparse
@@ -9,23 +9,31 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from core.engine import deobfuscate
 from core.detector import detect_obfuscator
+from core.dumper import dump_bytecode_and_constants
 
 BANNER = r"""
-  ____  ____  ___ __  __ _____     ____                                    
- |  _ \|  _ \|_ _|  \/  | ____|   |  _ \ _____   _____ _ __ ___  ___ _ __ 
- | |_) | |_) || || |\/| |  _|     | |_) / _ \ \ / / _ \ '__/ __|/ _ \ '__|
+  ____       _                 _____     ____      _____   _     
+ |  _ \ _ __(_)_ __ ___   ___ |__  /    |  _ \    | ____| | |    
+ | |_) | '__| | '_ ` _ \ / _ \  / /     | |_) |   |  _|   | |    
  |  __/|  _ < | || |  | | |___    |  _ <  __/\ V /  __/ |  \__ \  __/ |   
  |_|   |_| \_\___|_|  |_|_____|___|_| \_\___| \_/ \___|_|  |___/\___|_|   
-                             |_____|                                      
-                   Reverse Engineering Engine v1.0
+                                   |_____|                       
+       Reverse Engineering Layer (R.E.L) — Deobfuscator & Dumper v1.0
 """
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="PRIMEz Reverser — Advanced Lua/Luau Deobfuscator")
+    parser = argparse.ArgumentParser(description="PrimeZ R.E.L — Deobfuscator & Bytecode Dumper")
     parser.add_argument("input", help="Path to obfuscated input file or raw string")
-    parser.add_argument("-o", "--output", help="Path to write deobfuscated Lua output")
+    parser.add_argument("-o", "--output", help="Path to write output")
     parser.add_argument(
         "--backend",
         choices=["auto", "ib1", "ib2", "ib3", "luaobf", "luraph", "generic"],
@@ -33,6 +41,7 @@ def parse_args():
         help="Select deobfuscation backend (default: auto)"
     )
     parser.add_argument("--detect", action="store_true", help="Only detect the obfuscator and exit")
+    parser.add_argument("--dump", action="store_true", help="Dump constants pool, string table, and disassembled bytecode")
     parser.add_argument("--no-sanitize", action="store_true", help="Disable webhook and token sanitization")
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON result")
     return parser.parse_args()
@@ -64,9 +73,27 @@ async def main():
         print(f"[*] Supported:   {'Yes' if det.supported else 'No'}")
         print(f"[*] Reason:      {det.reason}")
         return
+
+    if args.dump:
+        if not args.json:
+            print(f"[*] Extracting constants and dumping bytecode ({len(source)} bytes)...")
+        dump_res = dump_bytecode_and_constants(source, args.backend)
+        if args.json:
+            print(json.dumps({
+                "success": True,
+                "mode": "dump",
+                "source": dump_res
+            }))
+            return
+        if args.output:
+            Path(args.output).write_text(dump_res, encoding="utf-8")
+            print(f"[+] Dump saved to: {args.output}")
+        else:
+            print(dump_res)
+        return
         
     if not args.json:
-        print(f"[*] Analyzing input ({len(source)} bytes)...")
+        print(f"[*] Analyzing & deobfuscating input ({len(source)} bytes)...")
         
     res = await deobfuscate(
         source=source,
@@ -77,6 +104,7 @@ async def main():
     if args.json:
         print(json.dumps({
             "success": res.success,
+            "mode": "deobfuscate",
             "source": res.source,
             "detection": {
                 "kind": res.detection.kind,
