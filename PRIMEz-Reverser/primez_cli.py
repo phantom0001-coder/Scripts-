@@ -6,6 +6,7 @@ High-performance deobfuscation and analysis suite for Lua and Luau.
 
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 from core.engine import deobfuscate
@@ -33,12 +34,14 @@ def parse_args():
     )
     parser.add_argument("--detect", action="store_true", help="Only detect the obfuscator and exit")
     parser.add_argument("--no-sanitize", action="store_true", help="Disable webhook and token sanitization")
+    parser.add_argument("--json", action="store_true", help="Output machine-readable JSON result")
     return parser.parse_args()
 
 async def main():
-    print(BANNER)
     args = parse_args()
-    
+    if not args.json:
+        print(BANNER)
+        
     input_path = Path(args.input)
     if input_path.exists():
         source = input_path.read_text(encoding="utf-8", errors="replace")
@@ -47,19 +50,47 @@ async def main():
         
     if args.detect:
         det = detect_obfuscator(source)
+        if args.json:
+            print(json.dumps({
+                "kind": det.kind,
+                "name": det.name,
+                "confidence": round(det.confidence * 100, 1),
+                "supported": det.supported,
+                "reason": det.reason
+            }))
+            return
         print(f"[*] Obfuscator:  {det.name} ({det.kind})")
         print(f"[*] Confidence:  {det.confidence * 100:.1f}%")
         print(f"[*] Supported:   {'Yes' if det.supported else 'No'}")
         print(f"[*] Reason:      {det.reason}")
         return
         
-    print(f"[*] Analyzing input ({len(source)} bytes)...")
+    if not args.json:
+        print(f"[*] Analyzing input ({len(source)} bytes)...")
+        
     res = await deobfuscate(
         source=source,
         target_backend=args.backend,
         sanitize=not args.no_sanitize
     )
     
+    if args.json:
+        print(json.dumps({
+            "success": res.success,
+            "source": res.source,
+            "detection": {
+                "kind": res.detection.kind,
+                "name": res.detection.name,
+                "confidence": round(res.detection.confidence * 100, 1),
+                "supported": res.detection.supported,
+                "reason": res.detection.reason
+            },
+            "backend_used": res.backend_used,
+            "duration_sec": round(res.duration_sec, 3),
+            "error": res.error
+        }))
+        return
+        
     if not res.success:
         print(f"\n[-] Deobfuscation failed in {res.duration_sec:.2f}s:")
         print(f"    {res.error}")
