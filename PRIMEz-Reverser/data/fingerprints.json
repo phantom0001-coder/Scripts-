@@ -1,0 +1,51 @@
+{
+  "IronBrew1": {
+    "sample_count": 0,
+    "features": [
+      "lit:ironbrew",
+      "shape:lua_vm_wrapper",
+      "shape:table_dispatch"
+    ]
+  },
+  "IronBrew2": {
+    "sample_count": 0,
+    "features": [
+      "lit:ironbrew",
+      "shape:lua_vm_wrapper",
+      "shape:table_dispatch",
+      "shape:bit_heavy"
+    ]
+  },
+  "IronBrew3": {
+    "sample_count": 0,
+    "features": [
+      "lit:--ironbrew3",
+      "lit:ironbrew3",
+      "shape:large_hex_string",
+      "shape:lua_vm_wrapper"
+    ]
+  },
+  "LuaObfuscator": {
+    "sample_count": 0,
+    "features": [
+      "lit:luaobfuscator",
+      "shape:lua_vm_wrapper",
+      "shape:table_dispatch"
+    ]
+  },
+  "Luraph": {
+    "sample_count": 0,
+    "features": [
+      "lit:luraph",
+      "lit:lph_",
+      "shape:large_hex_string"
+    ]
+  },
+  "MoonSec": {
+    "sample_count": 0,
+    "features": [
+      "lit:moonsec",
+      "shape:lua_vm_wrapper"
+    ]
+  }
+}
