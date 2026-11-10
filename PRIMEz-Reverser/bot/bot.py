@@ -4,10 +4,13 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root to sys.path
+# Add project root and bot dir to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+BOT_DIR = Path(__file__).resolve().parent
+
+for p in [PROJECT_ROOT, BOT_DIR]:
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
 
 import discord
 from discord import app_commands
@@ -28,10 +31,15 @@ from core.engine import deobfuscate
 from core.detector import detect_obfuscator
 from core.dumper import dump_bytecode_and_constants
 from core.io_resolver import resolve_input
-from bot.ui import make_primez_embed, DeobfActionView
+
+try:
+    from bot.ui import make_primez_embed, DeobfActionView
+except (ModuleNotFoundError, ImportError):
+    from ui import make_primez_embed, DeobfActionView
 
 intents = discord.Intents.default()
-intents.message_content = True
+# Slash commands work without privileged message_content intent
+intents.message_content = False
 
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 

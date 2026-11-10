@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PrimeZ R.E.L — Command Line Interface
-Reverse Engineering Layer (Deobfuscator & Memory/Bytecode Dumper) for Lua and Luau.
+Reverse Engineering Lua (Deobfuscator & Memory/Bytecode Dumper) for Lua and Luau.
 """
 
 import argparse
@@ -27,7 +27,7 @@ BANNER = r"""
  |  __/|  _ < | || |  | | |___    |  _ <  __/\ V /  __/ |  \__ \  __/ |   
  |_|   |_| \_\___|_|  |_|_____|___|_| \_\___| \_/ \___|_|  |___/\___|_|   
                                    |_____|                       
-       Reverse Engineering Layer (R.E.L) — Deobfuscator & Dumper v1.0
+       Reverse Engineering Lua (R.E.L) — Deobfuscator & Dumper v1.0
 """
 
 def parse_args():

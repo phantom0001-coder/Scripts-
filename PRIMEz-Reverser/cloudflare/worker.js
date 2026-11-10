@@ -1,6 +1,6 @@
 /**
  * PrimeZ R.E.L — Cloudflare Worker Edge Gateway
- * Reverse Engineering Layer (Deobfuscator & Memory/Bytecode Dumper)
+ * Reverse Engineering Lua (Deobfuscator & Memory/Bytecode Dumper)
  * Handles serverless Discord Interactions via Ed25519 signature verification
  * and routes deobfuscation/dump requests to the PrimeZ R.E.L kernel.
  */
@@ -76,7 +76,7 @@ export default {
     if (url.pathname === "/health" || url.pathname === "/") {
       return new Response(JSON.stringify({
         status: "operational",
-        service: "PrimeZ R.E.L (Reverse Engineering Layer)",
+        service: "PrimeZ R.E.L (Reverse Engineering Lua)",
         capabilities: ["deobfuscator", "bytecode_dumper", "memory_tracer", "fingerprinter"],
         timestamp: new Date().toISOString()
       }), {
