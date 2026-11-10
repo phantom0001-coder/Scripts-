@@ -1,16 +1,10 @@
 name = "primez-reverser"
 main = "worker.js"
 compatibility_date = "2024-09-23"
-
-# Account & Worker Settings
-# account_id = "c744ddf2a5e5e69a9de254ee0546789b"
+account_id = "c744ddf2a5e5e69a9de254ee0546789b"
 
 [vars]
-# Origin API where the heavy deobfuscation engine (Python/Luau/CLI) runs
 ORIGIN_URL = "https://primez-studios.onrender.com"
 ENVIRONMENT = "production"
-
-# Secrets to set via `npx wrangler secret put`:
-# DISCORD_PUBLIC_KEY
-# DISCORD_APPLICATION_ID
-# DISCORD_BOT_TOKEN
+DISCORD_PUBLIC_KEY = "f3f27f62b5efbd0c758d0fb7adfa053a02a5f7afca029f00e45e18baf8d2887e"
+DISCORD_APPLICATION_ID = "1569712748575723562"

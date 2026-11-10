@@ -7,6 +7,18 @@ ENGINES_DIR = BASE_DIR / "engines"
 BIN_DIR = BASE_DIR / "bin"
 DATA_DIR = BASE_DIR / "data"
 
+# Automatically load local .env if present
+_env_file = BASE_DIR / ".env"
+if _env_file.exists():
+    try:
+        for line in _env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+    except Exception:
+        pass
+
 # Discord Bot Configuration
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
