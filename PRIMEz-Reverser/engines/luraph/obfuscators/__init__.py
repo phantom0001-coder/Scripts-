@@ -20,7 +20,9 @@ PLUGINS = [
 MIN_CONFIDENCE = 0.5    # below this the input counts as unrecognized (the fallback runs)
 
 
-def by_name(name):
+def by_name(name):
+    if str(name).lower() in ('luraph', 'lph'):
+        name = 'luraph_v15'
     for p in PLUGINS:
         if p.name == name:
             return p

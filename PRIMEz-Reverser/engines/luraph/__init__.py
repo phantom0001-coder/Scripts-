@@ -27,7 +27,7 @@ async def run_luraph(source: str, engine_name: str | None = None) -> str:
             str(min(DEOBF_TIMEOUT, 90))
         ]
         
-        if engine_name and engine_name != "auto":
+        if engine_name and engine_name not in ("auto", "luraph"):
             cmd.extend(["--obfuscator", engine_name])
             
         proc = await asyncio.create_subprocess_exec(
