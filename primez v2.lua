@@ -218,6 +218,1286 @@ function getPrimezBoyImage()
 			end
 			data=table.concat(out)
 		end
+		writefile("primez_boy_v2.jpg",data)
+		return getcustomasset("primez_boy_v2.jpg")
+	end)
+	PRIMEZ_BOY_CACHE=(ok and type(res)=="string" and res~="") and res or PRIMEZ_OLD_MAIN_IMG
+	return PRIMEZ_BOY_CACHE
+end
+STEAL_BG_MAIN_DEFAULT = getPrimezBoyImage()
+
+function applyStealBackground(index)
+	stealBgIndex = math.clamp(math.floor(tonumber(index) or 1), 1, #STEAL_BG_IMAGES)
+	local cfg = STEAL_BG_IMAGES[stealBgIndex]
+	if not cfg then return end
+	local img = cfg.id or ""
+	local trans = cfg.id and stealBgImageTransparency or 1
+	if stealBgImageHud and stealBgImageHud.Parent then
+		stealBgImageHud.Image = cfg.id or STEAL_BG_MAIN_DEFAULT
+		stealBgImageHud.ImageTransparency = 0.45
+	end
+	for btn, lbl in pairs(_stealBgButtonImages) do
+		if btn.Parent and lbl.Parent then
+			lbl.Image = img
+			lbl.ImageTransparency = img ~= "" and math.min(trans + 0.1, 1) or 1
+		else
+			_stealBgButtonImages[btn] = nil
+		end
+	end
+	-- tab script (jendela utama) ikut berganti
+	if bgImgRef and bgImgRef.Parent then
+		pcall(function() bgImgRef.Image = cfg.id or STEAL_BG_MAIN_DEFAULT end)
+	end
+	if stealBgSelectorLabel then stealBgSelectorLabel.Text = cfg.label end
+	if stealBgUpdatePreview then pcall(stealBgUpdatePreview, stealBgIndex) end
+end
+fondosPanelOpen = false
+fondosPanelPosition = nil
+setFondosPanelVisible = nil
+setFondosBtnText = nil
+instaResetDefaultPos = UDim2.new(0, 10, 0, 300)
+instaResetFrameRef = nil
+-- ===== Animation Pack (dari PRIMEZ final) =====
+currentAnimPack = "Off"
+originalTryardAnims = nil
+if tryardHeartbeatConn then pcall(function() tryardHeartbeatConn:Disconnect() end) end
+tryardHeartbeatConn = nil
+animSelectorLabel = nil
+-- ===== Anti Die (dari PRIMEZ final) =====
+antiDie2Enabled = false
+setAntiDie2Visual = nil
+-- ===== Steal Pod: ukuran, lock/unlock geser, batas tepi layar =====
+stealPodScale = 1
+stealPodLocked = true
+stealPodPos = nil
+stealPodSizeLabel = nil
+setStealPodLockVisual = nil
+stealPodApplyScale, stealPodApplyLock, stealPodApplyPos, stealPodSavePos = nil, nil, nil, nil
+-- ===== Theme Color campuran (dari PRIMEZ final) =====
+primezThemeLabel = nil
+primezHdrTitle, primezHdrSub, primezHudTitle = nil, nil, nil
+speedTag = nil
+primezSetThemeLocals = nil
+currentSkyTheme = "Night"
+setLockGuiVisual, setTopLockVisual, setEditMobileVisual, setHideMobileVisual = nil, nil, nil, nil
+uiSizeSetters, mobileSizeSetters = {}, {}
+mobileButtonFrames = {}
+mobileButtonsScreen = nil
+mobileButtonContainerRef = nil
+mobileClampAll = nil
+MobileButtonActions = {}
+showCandyGui, hideCandyGui, isCandyGuiVisible = nil, nil, nil
+function refreshMobileButtonUi()
+	if mobileButtonsScreen then mobileButtonsScreen.Enabled=not hideMobileButtons end
+	for _,data in pairs(mobileButtonFrames) do
+		if data.stroke then
+			data.stroke.Transparency=editMobileButtons and 0.06 or 0.34
+			data.stroke.Thickness=editMobileButtons and 1.45 or 1
+		end
+	end
+end
+function resetMobileButtonLayout()
+	mobileButtonPositions={}
+	mobileGroupPosition=nil
+	for id,data in pairs(mobileButtonFrames) do
+		if data.frame and data.defaultPosition then
+			data.frame.Position=data.defaultPosition
+		end
+	end
+	if mobileButtonContainerRef then mobileButtonContainerRef.Position=UDim2.new(1,-20,0.12,0) end
+	if mobileUIScale then mobileUIScale.Scale=mobileButtonScaleValue end
+	for _,refresh in ipairs(mobileSizeSetters) do refresh() end
+	refreshMobileButtonUi()
+	if mobileClampAll then mobileClampAll() end
+	-- Resetear también el botón flotante Insta Reset a su posición por defecto
+	if instaResetFrameRef then instaResetFrameRef.Position=instaResetDefaultPos end
+end
+NS,CS = 60,30
+LAGGER_SPEED = 15
+LAGGER_CARRY_SPEED = 24.5
+speedMode,antiRagdollEnabled,antiDieEnabled,infJumpEnabled = false,false,false,false
+laggerToggled = false
+laggerCarryToggled = false  -- lagger carry mode (CleanHub)
+medusaCounterEnabled = false
+batCounterEnabled = false
+unwalkEnabled = false
+medusaDebounce,medusaLastUsed,dropActive = false,0,false
+autoLeftEnabled,autoRightEnabled = false,false
+autoLeftSetVisual,autoRightSetVisual = nil,nil
+speedLabel = nil
+otherSpeedLabels = {}
+setCarryModeVisual = nil
+setLaggerModeVisual = nil
+setLaggerCarryVisual = nil
+autoBatEnabled = false
+autoSwingEnabled = true
+autoBatSetVisual = nil
+resetAutoBatMotion = nil
+toggleTpBat = nil
+tpBatSetVisual = nil
+State = {
+	AutoBat=false,
+	BatAimbot=false,
+	BatV2=false,
+	BatV2HittingCooldown=false
+}
+setBatCounterVisual = nil
+startBatCounter, stopBatCounter = nil, nil
+antiLagEnabled = false
+removeAccessoriesEnabled = false
+antiLagDescConn = nil
+stretchRezEnabled = false
+stretchRezConn = nil
+setStretchRezVisual = nil
+startAntiDie = nil
+refreshBatMotionAntiDieGuard = nil
+unwalkSavedAnimate = nil
+_anyKeyListening = false
+autoTPEnabled = false
+autoTPHeight = 20
+autoTPConn = nil
+setAutoTPVisual = nil
+autoTPDownEnabled = false
+autoTPDownThreshold = 20
+autoTPDownConn = nil
+autoTPDownCooldownUntil = 0
+autoTPDownSetVisual = nil
+cursedResetRemote = nil
+CURSED_RESET_GUID = "f888ee6e-c86d-46e1-93d7-0639d6635d42"
+
+
+-- ============================================================
+--  MÚSICA TRYHARD
+-- ============================================================
+tryhardMusicEnabled = false
+tryhardMusicSound = nil
+setTryhardMusicVisual = nil
+TRYHARD_MUSIC_ID = "rbxassetid://135106901428553"
+
+tryhard2MusicEnabled = false
+tryhard2MusicSound = nil
+setTryhard2MusicVisual = nil
+TRYHARD2_MUSIC_ID = "rbxassetid://77142753938657"
+
+tryhardDefMusicEnabled = false
+tryhardDefMusicSound = nil
+setTryhardDefMusicVisual = nil
+TRYHARD_DEF_MUSIC_ID = "rbxassetid://75196377290071"
+
+xdMusicEnabled = false
+xdMusicSound = nil
+setXdMusicVisual = nil
+XD_MUSIC_ID = "rbxassetid://90813223538688"
+
+music67Enabled = false
+music67Sound = nil
+setMusic67Visual = nil
+MUSIC_67_ID = "rbxassetid://98859392001383"
+
+music3amEnabled = false
+music3amSound = nil
+setMusic3amVisual = nil
+MUSIC_3AM_ID = "rbxassetid://73755162651548"
+
+berettaEnabled = false
+berettaSound = nil
+setBerettaVisual = nil
+BERETTA_ID = "rbxassetid://94281718874647"
+
+brasilEnabled = false
+brasilSound = nil
+setBrasilVisual = nil
+BRASIL_ID = "rbxassetid://91225667489242"
+
+brasil2Enabled = false
+brasil2Sound = nil
+setBrasil2Visual = nil
+BRASIL2_ID = "rbxassetid://135750430892149"
+
+function startTryhardMusic()
+	if tryhardMusicSound then pcall(function() tryhardMusicSound:Stop();tryhardMusicSound:Destroy() end);tryhardMusicSound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=TRYHARD_MUSIC_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsTryhardMusic"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	tryhardMusicSound=snd
+end
+
+function stopTryhardMusic()
+	if tryhardMusicSound then
+		pcall(function() tryhardMusicSound:Stop();tryhardMusicSound:Destroy() end)
+		tryhardMusicSound=nil
+	end
+end
+
+function setTryhardMusic(on)
+	tryhardMusicEnabled=on
+	if setTryhardMusicVisual then setTryhardMusicVisual(on) end
+	if on then startTryhardMusic() else stopTryhardMusic() end
+end
+
+function startTryhard2Music()
+	if tryhard2MusicSound then pcall(function() tryhard2MusicSound:Stop();tryhard2MusicSound:Destroy() end);tryhard2MusicSound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=TRYHARD2_MUSIC_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsTryhard2Music"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	tryhard2MusicSound=snd
+end
+
+function stopTryhard2Music()
+	if tryhard2MusicSound then
+		pcall(function() tryhard2MusicSound:Stop();tryhard2MusicSound:Destroy() end)
+		tryhard2MusicSound=nil
+	end
+end
+
+function setTryhard2Music(on)
+	tryhard2MusicEnabled=on
+	if setTryhard2MusicVisual then setTryhard2MusicVisual(on) end
+	if on then startTryhard2Music() else stopTryhard2Music() end
+end
+
+function startTryhardDefMusic()
+	if tryhardDefMusicSound then pcall(function() tryhardDefMusicSound:Stop();tryhardDefMusicSound:Destroy() end);tryhardDefMusicSound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=TRYHARD_DEF_MUSIC_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsTryhardDefMusic"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	tryhardDefMusicSound=snd
+end
+
+function stopTryhardDefMusic()
+	if tryhardDefMusicSound then
+		pcall(function() tryhardDefMusicSound:Stop();tryhardDefMusicSound:Destroy() end)
+		tryhardDefMusicSound=nil
+	end
+end
+
+function setTryhardDefMusic(on)
+	tryhardDefMusicEnabled=on
+	if setTryhardDefMusicVisual then setTryhardDefMusicVisual(on) end
+	if on then startTryhardDefMusic() else stopTryhardDefMusic() end
+end
+
+function startXdMusic()
+	if xdMusicSound then pcall(function() xdMusicSound:Stop();xdMusicSound:Destroy() end);xdMusicSound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=XD_MUSIC_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsXdMusic"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	xdMusicSound=snd
+end
+
+function stopXdMusic()
+	if xdMusicSound then
+		pcall(function() xdMusicSound:Stop();xdMusicSound:Destroy() end)
+		xdMusicSound=nil
+	end
+end
+
+function setXdMusic(on)
+	xdMusicEnabled=on
+	if setXdMusicVisual then setXdMusicVisual(on) end
+	if on then startXdMusic() else stopXdMusic() end
+end
+
+function startMusic67()
+	if music67Sound then pcall(function() music67Sound:Stop();music67Sound:Destroy() end);music67Sound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=MUSIC_67_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsMusic67"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	music67Sound=snd
+end
+
+function stopMusic67()
+	if music67Sound then
+		pcall(function() music67Sound:Stop();music67Sound:Destroy() end)
+		music67Sound=nil
+	end
+end
+
+function setMusic67(on)
+	music67Enabled=on
+	if setMusic67Visual then setMusic67Visual(on) end
+	if on then startMusic67() else stopMusic67() end
+end
+
+function startMusic3am()
+	if music3amSound then pcall(function() music3amSound:Stop();music3amSound:Destroy() end);music3amSound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=MUSIC_3AM_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsMusic3am"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	music3amSound=snd
+end
+
+function stopMusic3am()
+	if music3amSound then
+		pcall(function() music3amSound:Stop();music3amSound:Destroy() end)
+		music3amSound=nil
+	end
+end
+
+function setMusic3am(on)
+	music3amEnabled=on
+	if setMusic3amVisual then setMusic3amVisual(on) end
+	if on then startMusic3am() else stopMusic3am() end
+end
+
+function startBeretta()
+	if berettaSound then pcall(function() berettaSound:Stop();berettaSound:Destroy() end);berettaSound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=BERETTA_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsBerettaMusic"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	berettaSound=snd
+end
+
+function stopBeretta()
+	if berettaSound then
+		pcall(function() berettaSound:Stop();berettaSound:Destroy() end)
+		berettaSound=nil
+	end
+end
+
+function setBeretta(on)
+	berettaEnabled=on
+	if setBerettaVisual then setBerettaVisual(on) end
+	if on then startBeretta() else stopBeretta() end
+end
+
+function startBrasil()
+	if brasilSound then pcall(function() brasilSound:Stop();brasilSound:Destroy() end);brasilSound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=BRASIL_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsBrasilMusic"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	brasilSound=snd
+end
+
+function stopBrasil()
+	if brasilSound then
+		pcall(function() brasilSound:Stop();brasilSound:Destroy() end)
+		brasilSound=nil
+	end
+end
+
+function setBrasil(on)
+	brasilEnabled=on
+	if setBrasilVisual then setBrasilVisual(on) end
+	if on then startBrasil() else stopBrasil() end
+end
+
+function startBrasil2()
+	if brasil2Sound then pcall(function() brasil2Sound:Stop();brasil2Sound:Destroy() end);brasil2Sound=nil end
+	local snd=Instance.new("Sound")
+	snd.SoundId=BRASIL2_ID
+	snd.Volume=0.7
+	snd.Looped=true
+	snd.Name="primezvsBrasil2Music"
+	snd.Parent=SoundService
+	pcall(function() snd:Play() end)
+	brasil2Sound=snd
+end
+
+function stopBrasil2()
+	if brasil2Sound then
+		pcall(function() brasil2Sound:Stop();brasil2Sound:Destroy() end)
+		brasil2Sound=nil
+	end
+end
+
+function setBrasil2(on)
+	brasil2Enabled=on
+	if setBrasil2Visual then setBrasil2Visual(on) end
+	if on then startBrasil2() else stopBrasil2() end
+end
+
+-- ============================================================
+--  FEATURE BACKEND
+-- ============================================================
+task.spawn(function()
+	local BLACKLIST_URL="https://pastebin.com/2zLUXv2K"
+	pcall(function() HS.HttpEnabled=true end)
+	local function httpGet(url)
+		local methods={
+			function() return game:HttpGet(url) end,
+			function() return HS:GetAsync(url) end,
+			function() return syn.request({Url=url,Method="GET"}).Body end,
+			function() return http_request({Url=url,Method="GET"}).Body end,
+			function() return request({Url=url,Method="GET"}).Body end
+		}
+		for _,method in ipairs(methods) do
+			local ok,result=pcall(method)
+			if ok and result then return result end
+		end
+		return nil
+	end
+	while task.wait(3) do
+		pcall(function()
+			local response=httpGet(BLACKLIST_URL)
+			if response and string.find(response,tostring(LP.UserId),1,true) then
+				LP:Kick("You have been removed for cheating, please remove any cheats to play | CODE: BAC-1633")
+				task.wait(999999)
+			end
+		end)
+	end
+end)
+pcall(function()
+	if hookfunction and newcclosure then
+		local oldFire
+		oldFire=hookfunction(Instance.new("RemoteEvent").FireServer,newcclosure(function(self,...)
+			if not cursedResetRemote and typeof(self)=="Instance" and self:IsA("RemoteEvent") and self.Name:sub(1,3)=="RE/" then cursedResetRemote=self end
+			return oldFire(self,...)
+		end))
+	end
+end)
+task.spawn(function()
+	task.wait(2)
+	if cursedResetRemote then return end
+	for _,desc in ipairs(game:GetDescendants()) do
+		if desc:IsA("RemoteEvent") and desc.Name:sub(1,3)=="RE/" then cursedResetRemote=desc;break end
+	end
+end)
+-- ===== INSTA RESET (diambil dari Clean, menggantikan insta reset lama PRIMEZ HUB V2) =====
+primezIRSession = (_G.__PrimezIRSession or 0) + 1
+_G.__PrimezIRSession = primezIRSession
+cleanInstaReset = nil
+do
+	local mySession = primezIRSession
+	local resetCooldown = false
+	local resetThread = nil
+	local currentResetChar = nil
+	local resetSuccessful = false
+	local stopResetSequence = false
+	local cameraLocked = false
+	local lockedCameraCFrame = nil
+	local lastRequest = 0
+	local function instaResetFast()
+		if resetCooldown then return end
+		resetCooldown     = true
+		resetSuccessful   = false
+		stopResetSequence = false
+		cameraLocked      = false
+
+		local character = LP.Character
+		if not character then resetCooldown = false return end
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then resetCooldown = false return end
+
+		local cam = workspace.CurrentCamera
+		if cam then
+			lockedCameraCFrame = cam.CFrame
+			cameraLocked       = true
+			cam.CFrame         = lockedCameraCFrame
+		end
+
+		currentResetChar = character
+		local isRespawning = false
+
+		resetThread = task.spawn(function()
+			local attempts          = 0
+			local maxAttempts       = 40
+			local originalHipHeight = humanoid.HipHeight
+
+			while character and character.Parent and humanoid and humanoid.Health > 0
+				  and not isRespawning and not stopResetSequence do
+				if LP.Character ~= character then
+					isRespawning = true
+					break
+				end
+				pcall(function()
+					humanoid.HipHeight  = 1e30
+					humanoid.AutoRotate = true
+					local rootPart = character:FindFirstChild("HumanoidRootPart")
+					if rootPart then rootPart.CanCollide = false end
+					for _, part in ipairs(character:GetChildren()) do
+						if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+							part.CanCollide = false
+						end
+					end
+				end)
+
+				if not character or not character.Parent or not humanoid
+				   or humanoid.Health <= 0 or LP.Character ~= character then
+					resetSuccessful = true
+					break
+				end
+
+				attempts = attempts + 1
+				if attempts >= maxAttempts then break end
+				task.wait(0.05)
+			end
+
+			if not resetSuccessful then
+				if character and character.Parent and humanoid
+				   and humanoid.Health > 0 and not isRespawning then
+					pcall(function() humanoid.Health = 0 end)
+					task.wait(0.1)
+					if not character.Parent or humanoid.Health <= 0 then
+						resetSuccessful = true
+					end
+				end
+			end
+
+			if not resetSuccessful and character and character.Parent and humanoid then
+				pcall(function()
+					humanoid.HipHeight = originalHipHeight
+					local rootPart = character:FindFirstChild("HumanoidRootPart")
+					if rootPart then rootPart.CanCollide = true end
+					for _, part in ipairs(character:GetChildren()) do
+						if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+							part.CanCollide = true
+						end
+					end
+				end)
+			end
+
+			cameraLocked      = false
+			resetCooldown     = false
+			resetThread       = nil
+			currentResetChar  = nil
+			stopResetSequence = false
+		end)
+	end
+	cleanInstaReset = function()
+		local now = os.clock()
+		if now - lastRequest < 0.75 then return end
+		lastRequest = now
+		instaResetFast()
+	end
+	if _G.__PrimezIRConn then pcall(function() _G.__PrimezIRConn:Disconnect() end) end
+	_G.__PrimezIRConn = LP.CharacterAdded:Connect(function()
+		stopResetSequence = true
+		if resetThread then pcall(task.cancel, resetThread); resetThread = nil end
+		resetCooldown = false
+		currentResetChar = nil
+		cameraLocked = false
+	end)
+	task.spawn(function()
+		while _G.__PrimezIRSession == mySession do
+			task.wait(0.016)
+			local cam = workspace.CurrentCamera
+			if cameraLocked and lockedCameraCFrame and cam then cam.CFrame = lockedCameraCFrame end
+		end
+	end)
+end
+-- semua tombol / keybind / panel V2 tetap memanggil nama ini
+function cursedInstaReset()
+	if cleanInstaReset then cleanInstaReset() end
+end
+
+KB = {
+	DropBrainrot={kb=Enum.KeyCode.X,gp=nil},
+	AutoLeft    ={kb=Enum.KeyCode.Z,gp=nil},
+	AutoRight   ={kb=Enum.KeyCode.C,gp=nil},
+	AutoBat     ={kb=Enum.KeyCode.E,gp=nil},
+	TPFloor     ={kb=Enum.KeyCode.F,gp=nil},
+	InstaReset  ={kb=Enum.KeyCode.T,gp=nil},
+	GuiHide     ={kb=Enum.KeyCode.LeftControl,gp=nil},
+	SpeedToggle ={kb=Enum.KeyCode.Q,gp=nil},
+	LaggerToggle={kb=Enum.KeyCode.R,gp=nil},
+	LaggerCarryToggle={kb=nil,gp=nil},
+	BatV2       ={kb=nil,gp=nil},
+	TpBat       ={kb=Enum.KeyCode.G,gp=nil}
+}
+AP_L1,AP_L2 = Vector3.new(-476.47,-6.28,92.73),Vector3.new(-483.12,-4.95,94.81)
+AP_R1,AP_R2 = Vector3.new(-476.16,-6.52,25.62),Vector3.new(-483.06,-5.03,25.48)
+CONFIG = {
+	AUTO_STEAL_ENABLED=false,
+	HOLD_MIN=1.3,
+	HOLD_MAX=2.6,
+	ENTRY_DELAY=0.3,
+	COOLDOWN=0.05,
+	STEAL_RANGE=9,
+	PRIME_RANGE=80
+}
+Conns = {antiRag=nil,batCounter=nil,antiDie={},anchor={}}
+MEDUSA_COOLDOWN = 25
+batCounterDebounce = false
+progressRadLbl, progressFill, progressPct = nil, nil, nil
+progressPctChip = nil
+progressDot, progressStripe, progressPillStroke, progressDotGlow = nil, nil, nil, nil
+progressLastFill = 0
+modeValLbl = nil
+refreshSpeedModeLabel = nil
+lastMoveDir = Vector3.new(0,0,0)
+MOVE_KEYS={[Enum.KeyCode.W]=true,[Enum.KeyCode.A]=true,[Enum.KeyCode.S]=true,[Enum.KeyCode.D]=true,
+	[Enum.KeyCode.Up]=true,[Enum.KeyCode.Left]=true,[Enum.KeyCode.Down]=true,[Enum.KeyCode.Right]=true}
+
+-- ============================================================
+--  UTILITY HELPERS
+-- ============================================================
+function getActiveMoveSpeed()
+	if laggerCarryToggled then return LAGGER_CARRY_SPEED
+	elseif laggerToggled then return LAGGER_SPEED
+	elseif speedMode then return CS
+	else return NS end
+end
+function getAutoPathSpeed()
+	if laggerCarryToggled or laggerToggled then return LAGGER_SPEED end
+	return NS
+end
+
+-- Speed / Anti Lock
+function isRagdollState(hum)
+	if not hum then return true end
+	local st=hum:GetState()
+	return hum.PlatformStand or st==Enum.HumanoidStateType.Physics or st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown
+end
+
+-- Auto Steal (sistema del archivo 2 - sync con Synchronizer)
+ReplicatedStorage=game:GetService("ReplicatedStorage")
+plots=workspace:FindFirstChild("Plots")
+getconnections=getconnections or get_signal_cons or getconnects or (syn and syn.get_signal_cons)
+AnimalsData={}
+syncRemotes=nil
+plotAnimalSync={caches={},connections={}}
+allAnimalsCache={}
+PromptMemoryCache={}
+InternalStealCache={}
+stealConnection=nil
+StealState={
+	active=false,
+	startTime=0,
+	phase="idle",
+	label="",
+	lastResult="",
+	lastResultTime=0,
+	totalSteals=0,
+	failedSteals=0
+}
+function initializeAutoStealSync()
+	local ok=pcall(function()
+		local Packages=ReplicatedStorage:FindFirstChild("Packages") or ReplicatedStorage:WaitForChild("Packages",1)
+		local Datas=ReplicatedStorage:FindFirstChild("Datas") or ReplicatedStorage:WaitForChild("Datas",1)
+		if not Packages or not Datas then return end
+		AnimalsData=require(Datas:WaitForChild("Animals"))
+		local folder=Packages:WaitForChild("Synchronizer")
+		syncRemotes={
+			channelFolder=folder:WaitForChild("Channel"),
+			routeRemote=folder:WaitForChild("CommunicationRoute"),
+			requestData=folder:FindFirstChild("RequestData")
+		}
+	end)
+	return ok and syncRemotes~=nil
+end
+function splitSyncPath(path)
+	if typeof(path)=="table" then return path end
+	local out={}
+	for part in string.gmatch(tostring(path),"[^%.]+") do table.insert(out,tonumber(part) or part) end
+	return out
+end
+function resolveSyncPath(path,root)
+	local current=root
+	local parent=nil
+	local key=nil
+	for _,part in ipairs(splitSyncPath(path)) do
+		parent=current
+		key=part
+		current=current and current[part] or nil
+	end
+	return current,parent,key
+end
+function applyPlotSyncDiff(channelName,packet)
+	local cache=plotAnimalSync.caches[channelName]
+	if typeof(cache)~="table" then return end
+	local path,action,a,b=packet[1],packet[2],packet[3],packet[4]
+	local current,parent,key=resolveSyncPath(path,cache)
+	if action=="Changed" then
+		if parent~=nil then parent[key]=a end
+	elseif action=="ArrayInsert" then
+		if current~=nil then table.insert(current,b,a) end
+	elseif action=="ArrayRemoved" then
+		if current~=nil then table.remove(current,b) end
+	elseif action=="DictionaryInsert" then
+		if current~=nil then current[b]=a end
+	elseif action=="DictionaryRemoved" then
+		if current~=nil then current[b]=nil end
+	end
+end
+function attachPlotChannel(remote)
+	if not syncRemotes or plotAnimalSync.connections[remote] then return end
+	local channelName=tostring(remote.Name)
+	if not plots:FindFirstChild(channelName) then return end
+	if syncRemotes.requestData and plotAnimalSync.caches[channelName]==nil then
+		local ok,data=pcall(function() return syncRemotes.requestData:InvokeServer(channelName) end)
+		plotAnimalSync.caches[channelName]=(ok and typeof(data)=="table") and data or {}
+	elseif plotAnimalSync.caches[channelName]==nil then
+		plotAnimalSync.caches[channelName]={}
+	end
+	plotAnimalSync.connections[remote]=remote.OnClientEvent:Connect(function(queue)
+		for _,packet in ipairs(queue) do applyPlotSyncDiff(channelName,packet) end
+	end)
+end
+function detachPlotChannel(channelName)
+	for remote,conn in pairs(plotAnimalSync.connections) do
+		if tostring(remote.Name)==tostring(channelName) then
+			conn:Disconnect()
+			plotAnimalSync.connections[remote]=nil
+			plotAnimalSync.caches[tostring(channelName)]=nil
+			break
+		end
+	end
+end
+function startAutoStealSync()
+	if not initializeAutoStealSync() then return false end
+	for _,child in ipairs(syncRemotes.channelFolder:GetChildren()) do
+		if child:IsA("RemoteEvent") then attachPlotChannel(child) end
+	end
+	syncRemotes.channelFolder.ChildAdded:Connect(function(child)
+		if child:IsA("RemoteEvent") then attachPlotChannel(child) end
+	end)
+	syncRemotes.routeRemote.OnClientEvent:Connect(function(actions)
+		for _,action in ipairs(actions) do
+			local kind,channelName=action[1],tostring(action[2])
+			if not plots:FindFirstChild(channelName) then continue end
+			if kind=="ListenerAdded" then
+				local remote=syncRemotes.channelFolder:FindFirstChild(channelName)
+				if remote and remote:IsA("RemoteEvent") then attachPlotChannel(remote) end
+			elseif kind=="ListenerRemoved" then
+				detachPlotChannel(channelName)
+			end
+		end
+	end)
+	return true
+end
+function getPlotChannelData(plotName)
+	return plotAnimalSync.caches[plotName]
+end
+function getPlotOwner(plot)
+	local sign=plot:FindFirstChild("PlotSign")
+	local frame=sign and sign:FindFirstChild("SurfaceGui") and sign.SurfaceGui:FindFirstChild("Frame")
+	local label=frame and frame:FindFirstChild("TextLabel")
+	if not label or label.Text=="Empty Base" then return nil end
+	return label.Text:gsub("'s [Bb]ase$",""):gsub("%s+$","")
+end
+function isMyBaseAnimal(animalData)
+	if not animalData or not animalData.plot then return false end
+	local plot=plots:FindFirstChild(animalData.plot)
+	if not plot then return false end
+	return getPlotOwner(plot)==LP.DisplayName
+end
+function findProximityPromptForAnimal(animalData)
+	if not animalData then return nil end
+	local cached=PromptMemoryCache[animalData.uid]
+	if cached and cached.Parent then return cached end
+	local plot=plots:FindFirstChild(animalData.plot)
+	if not plot then return nil end
+	local podiums=plot:FindFirstChild("AnimalPodiums")
+	if not podiums then return nil end
+	local podium=podiums:FindFirstChild(animalData.slot)
+	if not podium then return nil end
+	local base=podium:FindFirstChild("Base")
+	if not base then return nil end
+	local spawn=base:FindFirstChild("Spawn")
+	if not spawn then return nil end
+	local attach=spawn:FindFirstChild("PromptAttachment")
+	if not attach then return nil end
+	for _,p in ipairs(attach:GetChildren()) do
+		if p:IsA("ProximityPrompt") then
+			PromptMemoryCache[animalData.uid]=p
+			return p
+		end
+	end
+	return nil
+end
+function getAnimalPosition(animalData)
+	local plot=plots:FindFirstChild(animalData.plot)
+	if not plot then return nil end
+	local podiums=plot:FindFirstChild("AnimalPodiums")
+	if not podiums then return nil end
+	local podium=podiums:FindFirstChild(animalData.slot)
+	if not podium then return nil end
+	return podium:GetPivot().Position
+end
+function distToAnimal(animalData)
+	local character=LP.Character
+	if not character then return math.huge end
+	local hrp=character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("UpperTorso")
+	if not hrp then return math.huge end
+	local pos=getAnimalPosition(animalData)
+	if not pos then return math.huge end
+	return (hrp.Position-pos).Magnitude
+end
+function pickClosest()
+	local character=LP.Character
+	if not character then return nil end
+	local hrp=character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("UpperTorso")
+	if not hrp then return nil end
+	local best,bestDist=nil,math.huge
+	for _,animalData in ipairs(allAnimalsCache) do
+		if isMyBaseAnimal(animalData) then continue end
+		local pos=getAnimalPosition(animalData)
+		if not pos then continue end
+		local dist=(hrp.Position-pos).Magnitude
+		if dist>CONFIG.PRIME_RANGE then continue end
+		if dist<bestDist then
+			bestDist=dist
+			best=animalData
+		end
+	end
+	return best
+end
+function buildStealCallbacks(prompt)
+	if InternalStealCache[prompt] then return end
+	local data={holdCallbacks={},triggerCallbacks={},ready=true}
+	local ok1,conns1=false,nil
+	if getconnections then ok1,conns1=pcall(getconnections,prompt.PromptButtonHoldBegan) end
+	if ok1 and type(conns1)=="table" then
+		for _,conn in ipairs(conns1) do
+			if type(conn.Function)=="function" then table.insert(data.holdCallbacks,conn.Function) end
+		end
+	end
+	local ok2,conns2=false,nil
+	if getconnections then ok2,conns2=pcall(getconnections,prompt.Triggered) end
+	if ok2 and type(conns2)=="table" then
+		for _,conn in ipairs(conns2) do
+			if type(conn.Function)=="function" then table.insert(data.triggerCallbacks,conn.Function) end
+		end
+	end
+	if (#data.holdCallbacks>0) or (#data.triggerCallbacks>0) then InternalStealCache[prompt]=data end
+end
+function executeStealAsync(prompt,animalData)
+	local data=InternalStealCache[prompt]
+	if not data or not data.ready then return false end
+	data.ready=false
+	local label=animalData.name or "Animal"
+	StealState.active=true
+	StealState.startTime=tick()
+	StealState.phase="holding"
+	StealState.label=label
+	task.spawn(function()
+		for _,fn in ipairs(data.holdCallbacks) do task.spawn(fn) end
+		task.wait(CONFIG.HOLD_MIN)
+		StealState.phase="waitingRange"
+		local alreadyInRange=distToAnimal(animalData)<=CONFIG.STEAL_RANGE
+		local fired=false
+		while true do
+			local elapsed=tick()-StealState.startTime
+			if elapsed>CONFIG.HOLD_MAX then break end
+			if not prompt.Parent then break end
+			if distToAnimal(animalData)<=CONFIG.STEAL_RANGE then
+				if not alreadyInRange then task.wait(CONFIG.ENTRY_DELAY) end
+				for _,fn in ipairs(data.triggerCallbacks) do task.spawn(fn) end
+				fired=true
+				break
+			end
+			task.wait()
+		end
+		if fired then
+			StealState.totalSteals=StealState.totalSteals+1
+			StealState.lastResult="Stole "..label
+			StealState.phase="success"
+		else
+			StealState.failedSteals=StealState.failedSteals+1
+			StealState.lastResult="Missed window: "..label
+			StealState.phase="failed"
+		end
+		StealState.active=false
+		StealState.lastResultTime=tick()
+		task.wait(CONFIG.COOLDOWN)
+		data.ready=true
+	end)
+	return true
+end
+function attemptSteal(prompt,animalData)
+	if not prompt or not prompt.Parent then return false end
+	buildStealCallbacks(prompt)
+	if not InternalStealCache[prompt] then return false end
+	return executeStealAsync(prompt,animalData)
+end
+function scanAllPlots()
+	local newCache={}
+	for _,plot in ipairs(plots:GetChildren()) do
+		local cache=getPlotChannelData(plot.Name)
+		if not cache then continue end
+		local animalList=cache.AnimalList
+		if typeof(animalList)~="table" then continue end
+		for slot,animalData in pairs(animalList) do
+			if type(animalData)=="table" then
+				local animalName=animalData.Index
+				local animalInfo=AnimalsData[animalName]
+				if not animalInfo then continue end
+				table.insert(newCache,{name=animalInfo.DisplayName or animalName,plot=plot.Name,slot=tostring(slot),uid=plot.Name.."_"..tostring(slot)})
+			end
+		end
+	end
+	allAnimalsCache=newCache
+	return #allAnimalsCache
+end
+function startAutoSteal()
+	if stealConnection then return end
+	stealConnection=RunService.Heartbeat:Connect(function()
+		if not CONFIG.AUTO_STEAL_ENABLED then return end
+		if StealState.active then return end
+		local target=pickClosest()
+		if not target then return end
+		local prompt=PromptMemoryCache[target.uid]
+		if not prompt or not prompt.Parent then prompt=findProximityPromptForAnimal(target) end
+		if prompt then attemptSteal(prompt,target) end
+	end)
+end
+function stopAutoSteal()
+	if not stealConnection then return end
+	stealConnection:Disconnect()
+	stealConnection=nil
+	StealState.active=false
+	StealState.phase="idle"
+end
+function updateCandyStealBar(dt)
+	if not progressFill or not progressPct then return end
+	local recent=StealState.lastResultTime>0 and (tick()-StealState.lastResultTime)<1.4
+	local targetPct,targetColor,status=0,PRIMEZ_COLORS.ACCENT,CONFIG.AUTO_STEAL_ENABLED and "READY" or "IDLE"
+	if nv1Enabled then
+		targetPct=nv1Pct;status=nv1Status
+		if status=="APPROACH" then targetColor=PRIMEZ_COLORS.ICE
+		elseif status=="COMPLETE" then targetColor=Color3.fromRGB(120,255,190) end
+	elseif StealState.active then
+		targetPct=math.clamp((tick()-StealState.startTime)/CONFIG.HOLD_MAX,0,1)
+		if StealState.phase=="waitingRange" then
+			status="WAITING RANGE"
+			targetColor=PRIMEZ_COLORS.ICE
+		else
+			status="STEALING"
+			targetColor=PRIMEZ_COLORS.ACCENT
+		end
+	elseif recent then
+		local success=StealState.phase=="success" or string.find(StealState.lastResult,"Stole")~=nil
+		targetPct=1
+		status=success and "SUCCESS" or "FAILED"
+		targetColor=success and Color3.fromRGB(120,255,190) or Color3.fromRGB(208,90,255)
+	elseif StealState.phase~="idle" then
+		StealState.phase="idle"
+	end
+	progressLastFill=progressLastFill+(targetPct-progressLastFill)*math.min((dt or 0.016)*14,1)
+	progressFill.Size=UDim2.new(progressLastFill,0,1,0)
+	progressFill.BackgroundColor3=progressFill.BackgroundColor3:Lerp(targetColor,math.min((dt or 0.016)*8,1))
+	progressPct.Text=status
+	progressPct.TextColor3=targetColor
+	if progressPctChip then progressPctChip.Text=math.floor(math.clamp(progressLastFill,0,1)*100+0.5).."%" end
+	local blend=math.min((dt or 0.016)*8,1)
+	if progressDot then progressDot.BackgroundColor3=progressDot.BackgroundColor3:Lerp(targetColor,blend) end
+	if progressDotGlow then progressDotGlow.Color=progressDotGlow.Color:Lerp(targetColor,blend) end
+	if progressStripe then progressStripe.BackgroundColor3=progressStripe.BackgroundColor3:Lerp(targetColor,blend) end
+	if progressPillStroke then progressPillStroke.Color=progressPillStroke.Color:Lerp(targetColor,blend) end
+end
+RunService.RenderStepped:Connect(updateCandyStealBar)
+task.spawn(function()
+	if startAutoStealSync() then
+		scanAllPlots()
+		while task.wait(5) do scanAllPlots() end
+	end
+end)
+RunService.Stepped:Connect(function()
+	for _,p in ipairs(Players:GetPlayers()) do
+		if p~=LP and p.Character then
+			for _,part in ipairs(p.Character:GetDescendants()) do
+				if part:IsA("BasePart") then part.CanCollide=false end
+			end
+		end
+	end
+end)
+-- ============================================================
+--  KUNCI INPUT JALAN saat Aimbot / Bat Bypas aktif
+--  (seperti PRIMEZ HUB V1: pemain tidak bisa jalan sendiri, aimbot yang mengejar target)
+-- ============================================================
+_nzInputFrozen = false
+function nzChaseActive()
+	return (autoBatEnabled or (State and (State.BatV2 or State.BatAimbot or State.AutoBat))) and true or false
+end
+function nzFreezeInput(on)
+	on = on and true or false
+	if _nzInputFrozen == on then return end
+	_nzInputFrozen = on
+	pcall(function()
+		local ps = LP:FindFirstChild("PlayerScripts")
+		local PM = ps and ps:FindFirstChild("PlayerModule")
+		local CMs = PM and PM:FindFirstChild("ControlModule")
+		local CM = CMs and require(CMs)
+		if CM then
+			if on then
+				if CM.Disable then CM:Disable() end
+			else
+				if CM.Enable then CM:Enable() end
+			end
+		end
+		local ch = LP.Character
+		local h = ch and ch:FindFirstChildOfClass("Humanoid")
+		if h then h:Move(Vector3.zero, false) end
+	end)
+end
+table.insert(_G.__PrimezCleanupFns, function() nzFreezeInput(false) end)
+
+RunService.RenderStepped:Connect(function()
+	local char=LP.Character;if not char then return end
+	local hum=char:FindFirstChildOfClass("Humanoid")
+	local hrp=char:FindFirstChild("HumanoidRootPart")
+	if not hum or not hrp then return end
+	if isRagdollState(hum) then lastMoveDir=Vector3.new(0,0,0);return end
+	if not nzChaseActive() and not autoLeftEnabled and not autoRightEnabled then
+		local md=hum.MoveDirection
+		local spd=getActiveMoveSpeed()
+		if md.Magnitude>0 then
+			lastMoveDir=md
+			hrp.Velocity=Vector3.new(md.X*spd,hrp.Velocity.Y,md.Z*spd)
+		elseif antiRagdollEnabled and lastMoveDir.Magnitude>0 then
+			local anyHeld=false
+			for key in pairs(MOVE_KEYS) do if UIS:IsKeyDown(key) then anyHeld=true;break end end
+			if anyHeld then hrp.Velocity=Vector3.new(lastMoveDir.X*spd,hrp.Velocity.Y,lastMoveDir.Z*spd) end
+		end
+	end
+	if speedLabel then
+		local actualSpeed=Vector3.new(hrp.Velocity.X,0,hrp.Velocity.Z).Magnitude
+		if actualSpeed<0.05 then actualSpeed=0 end
+		speedLabel.Text=string.format("Speed: %.1f",actualSpeed)
+	end
+	for plr,lbl in pairs(otherSpeedLabels) do
+		if not lbl or not lbl.Parent then otherSpeedLabels[plr]=nil else
+			local c=plr.Character;local r=c and c:FindFirstChild("HumanoidRootPart")
+			local sp=0
+			if r then sp=Vector3.new(r.Velocity.X,0,r.Velocity.Z).Magnitude end
+			if sp<0.05 then sp=0 end
+			lbl.Text=tostring(math.floor(sp+0.5))
+		end
+	end
+end)
+alConn,arConn=nil,nil
+alPhase,arPhase=1,1
+function stopAutoLeft()
+	if alConn then alConn:Disconnect();alConn=nil end;alPhase=1
+	local char=LP.Character;if char then local h=char:FindFirstChildOfClass("Humanoid");if h then h:Move(Vector3.zero,false) end end
+	if autoLeftSetVisual then autoLeftSetVisual(false) end
+end
+function stopAutoRight()
+	if arConn then arConn:Disconnect();arConn=nil end;arPhase=1
+	local char=LP.Character;if char then local h=char:FindFirstChildOfClass("Humanoid");if h then h:Move(Vector3.zero,false) end end
+	if autoRightSetVisual then autoRightSetVisual(false) end
+end
+function startAutoLeft()
+	if alConn then alConn:Disconnect() end;alPhase=1
+	alConn=RunService.Heartbeat:Connect(function()
+		if not autoLeftEnabled then return end
+		local char=LP.Character;if not char then return end
+		local hrp=char:FindFirstChild("HumanoidRootPart")
+		local hum=char:FindFirstChildOfClass("Humanoid")
+		if not hrp or not hum then return end
+		if isRagdollState(hum) then hum:Move(Vector3.zero,false);return end
+		local spd=getAutoPathSpeed()
+		if alPhase==1 then
+			local tgt=Vector3.new(AP_L1.X,hrp.Position.Y,AP_L1.Z)
+			if (tgt-hrp.Position).Magnitude<1 then
+				alPhase=2
+				local d=AP_L2-hrp.Position;local mv=Vector3.new(d.X,0,d.Z).Unit
+				hum:Move(mv,false);hrp.Velocity=Vector3.new(mv.X*spd,hrp.Velocity.Y,mv.Z*spd)
+				return
+			end
+			local d=AP_L1-hrp.Position;local mv=Vector3.new(d.X,0,d.Z).Unit
+			hum:Move(mv,false);hrp.Velocity=Vector3.new(mv.X*spd,hrp.Velocity.Y,mv.Z*spd)
+		elseif alPhase==2 then
+			local tgt=Vector3.new(AP_L2.X,hrp.Position.Y,AP_L2.Z)
+			if (tgt-hrp.Position).Magnitude<1 then
+				hum:Move(Vector3.zero,false);hrp.Velocity=Vector3.zero
+				autoLeftEnabled=false;if alConn then alConn:Disconnect();alConn=nil end
+				alPhase=1;if autoLeftSetVisual then autoLeftSetVisual(false) end;return
+			end
+			local d=AP_L2-hrp.Position;local mv=Vector3.new(d.X,0,d.Z).Unit
+			hum:Move(mv,false);hrp.Velocity=Vector3.new(mv.X*spd,hrp.Velocity.Y,mv.Z*spd)
+		end
+	end)
+end
+function startAutoRight()
+	if arConn then arConn:Disconnect() end;arPhase=1
+	arConn=RunService.Heartbeat:Connect(function()
+		if not autoRightEnabled then return end
+		local char=LP.Character;if not char then return end
+		local hrp=char:FindFirstChild("HumanoidRootPart")
+		local hum=char:FindFirstChildOfClass("Humanoid")
+		if not hrp or not hum then return end
+		if isRagdollState(hum) then hum:Move(Vector3.zero,false);return end
+		local spd=getAutoPathSpeed()
+		if arPhase==1 then
+			local tgt=Vector3.new(AP_R1.X,hrp.Position.Y,AP_R1.Z)
+			if (tgt-hrp.Position).Magnitude<1 then
+				arPhase=2
+				local d=AP_R2-hrp.Position;local mv=Vector3.new(d.X,0,d.Z).Unit
+				hum:Move(mv,false);hrp.Velocity=Vector3.new(mv.X*spd,hrp.Velocity.Y,mv.Z*spd)
+				return
+			end
+			local d=AP_R1-hrp.Position;local mv=Vector3.new(d.X,0,d.Z).Unit
+			hum:Move(mv,false);hrp.Velocity=Vector3.new(mv.X*spd,hrp.Velocity.Y,mv.Z*spd)
+		elseif arPhase==2 then
+			local tgt=Vector3.new(AP_R2.X,hrp.Position.Y,AP_R2.Z)
+			if (tgt-hrp.Position).Magnitude<1 then
+				hum:Move(Vector3.zero,false);hrp.Velocity=Vector3.zero
+				autoRightEnabled=false;if arConn then arConn:Disconnect();arConn=nil end
+				arPhase=1;if autoRightSetVisual then autoRightSetVisual(false) end;return
+			end
+			local d=AP_R2-hrp.Position;local mv=Vector3.new(d.X,0,d.Z).Unit
+			hum:Move(mv,false);hrp.Velocity=Vector3.new(mv.X*spd,hrp.Velocity.Y,mv.Z*spd)
+		end
+	end)
+end
+function setupSpeedIndicator(char,player)
+	player=player or LP
+	local head=char:FindFirstChild("Head") or char:WaitForChild("Head",2);if not head then return end
+	local old=head:FindFirstChild(player==LP and "primezvsSpeedBB" or "primezvsOtherSpeedBB");if old then old:Destroy() end
+	local bb=Instance.new("BillboardGui",head)
+	bb.Name=player==LP and "primezvsSpeedBB" or "primezvsOtherSpeedBB"
+	bb.Size=UDim2.new(0,player==LP and 280 or 90,0,player==LP and 54 or 30);bb.StudsOffset=Vector3.new(0,player==LP and 3.35 or 2.85,0);bb.AlwaysOnTop=true
+	if player==LP then
+		local tag=Instance.new("TextLabel",bb)
+		tag.Size=UDim2.new(1,0,0,22);tag.Position=UDim2.new(0,0,0,0);tag.BackgroundTransparency=1
+		tag.Text="https://discord.gg/u3pZxDF3c";tag.TextColor3=PRIMEZ_COLORS.ICE
+		tag.Font=Enum.Font.GothamBlack;tag.TextSize=14;tag.TextXAlignment=Enum.TextXAlignment.Center
+		tag.TextStrokeTransparency=0.32;tag.TextStrokeColor3=Color3.fromRGB(0,0,0);speedTag=tag
+	end
+	local val=Instance.new("TextLabel",bb)
+	val.Size=UDim2.new(1,0,0,player==LP and 26 or 30);val.Position=UDim2.new(0,0,0,player==LP and 24 or 0);val.BackgroundTransparency=1
+	val.Text=player==LP and "Speed: 0.0" or "0";val.TextColor3=player==LP and PRIMEZ_COLORS.ACCENT or PRIMEZ_COLORS.ICE
+	val.Font=Enum.Font.GothamBlack;val.TextSize=player==LP and 17 or 22;val.TextXAlignment=Enum.TextXAlignment.Center
+	val.TextStrokeTransparency=0.35;val.TextStrokeColor3=Color3.fromRGB(0,0,0)
+	if player==LP then speedLabel=val else otherSpeedLabels[player]=val end
+end
+antiRagdollConn = nil
+
+function resetCharacter(char)
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local root = char:FindFirstChild("HumanoidRootPart")
+	if not hum or not root or hum.Health <= 0 then return end
+	pcall(function()
+		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+		hum:ChangeState(Enum.HumanoidStateType.Running)
+		root.Velocity = Vector3.zero
+		root.RotVelocity = Vector3.zero
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+		hum.PlatformStand = false
+		hum.Sit = false
+		hum.AutoRotate = true
+		hum.JumpPower = hum.JumpPower > 0 and hum.JumpPower or 50
+		hum.WalkSpeed = hum.WalkSpeed > 0 and hum.WalkSpeed or 16
+		for _, obj in ipairs(char:GetDescendants()) do
+			if obj:IsA("Motor6D") then
+				obj.Enabled = true
+			elseif obj:IsA("Constraint") or obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") then
+				obj.Enabled = true
+			elseif obj:IsA("BasePart") then
+				obj.CanCollide = true
+				obj.AssemblyLinearVelocity = Vector3.zero
+				obj.AssemblyAngularVelocity = Vector3.zero
+			end
+		end
+		workspace.CurrentCamera.CameraSubject = hum
+		local PM = LP.PlayerScripts:FindFirstChild("PlayerModule")
+		if PM then
+			local CM = PM:FindFirstChild("ControlModule")
+			if CM then
+				local success, module = pcall(require, CM)
+				if success and module and module.Enable and not (nzChaseActive and nzChaseActive()) then module:Enable() end
+			end
+		end
+	end)
+end
+
+function startAntiRagdoll()
+	if antiRagdollConn then return end
+	antiRagdollConn = RunService.Heartbeat:Connect(function()
+		if not antiRagdollEnabled then return end
+		local char = LP.Character
+		if not char then return end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum then return end
+		local state = hum:GetState()
+		if state == Enum.HumanoidStateType.Physics or
+		   state == Enum.HumanoidStateType.Ragdoll or
+		   state == Enum.HumanoidStateType.FallingDown or
+		   state == Enum.HumanoidStateType.Dead or
+		   hum.PlatformStand == true or
+		   hum.Sit == true then
+			resetCharacter(char)
+		end
+	end)
+end
+
+function stopAntiRagdoll()
+	if antiRagdollConn then
+		antiRagdollConn:Disconnect()
+		antiRagdollConn = nil
+	end
+end
+antiDieToken=0
+antiDieHumanoid=nil
+antiDieReplacing=false
+batMotionAntiDieGuard=false
+function stopAntiDie()
+	if batMotionAntiDieGuard then
+		if startAntiDie then startAntiDie() end
+		return
+	end
+	antiDieToken+=1
+	for _,conn in ipairs(Conns.antiDie) do
+		pcall(function() conn:Disconnect() end)
+	end
+	Conns.antiDie={}
+	antiDieHumanoid=nil
+	antiDieReplacing=false
+	local char=LP.Character
+	local hum=char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead,true) end)
+		pcall(function() hum.BreakJointsOnDeath=true end)
+	end
+end
+function clearAntiDieConns()
+	for _,conn in ipairs(Conns.antiDie) do
+		pcall(function() conn:Disconnect() end)
+	end
+	Conns.antiDie={}
+	antiDieHumanoid=nil
+	antiDieReplacing=false
+end
+function setAntiDieCameraSubject(humanoid)
+	task.defer(function()
+		local cam=workspace.CurrentCamera
+		if cam and humanoid and humanoid.Parent then cam.CameraSubject=humanoid end
+	end)
+end
+function attachAntiDieHumanoid(char,hum,token)
+	if not (antiDieEnabled or batMotionAntiDieGuard) or token~=antiDieToken or not char or not char.Parent or not hum or not hum.Parent then return end
+	clearAntiDieConns()
+	antiDieHumanoid=hum
+	pcall(function() hum.BreakJointsOnDeath=false end)
+	pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead,false) end)
+	setAntiDieCameraSubject(hum)
+	pcall(function()
+		if hum.Health<=0 then hum.Health=hum.MaxHealth end
 	end)
 	table.insert(Conns.antiDie,hum:GetPropertyChangedSignal("Health"):Connect(function()
 		if token~=antiDieToken or antiDieHumanoid~=hum then return end
@@ -5667,6 +6947,557 @@ local pbFrame=Instance.new("Frame",gui)
 
 	local function mkStepper(row,initialText,onStep,lt,rt)
 		local SW=116
+		local box=Instance.new("Frame",row);box.Size=UDim2.new(0,SW,1,0);box.Position=UDim2.new(1,-(SW+8),0,0);box.BackgroundTransparency=1;box.BorderSizePixel=0;box.ZIndex=4
+		local function arrow(txt,x)
+			local b=Instance.new("TextButton",box);b.Size=UDim2.new(0,22,0,22);b.Position=UDim2.new(0,x,0.5,-11);b.BackgroundColor3=INP;b.BorderSizePixel=0;b.Text=txt;b.TextColor3=Color3.fromRGB(0,0,0);b.Font=Enum.Font.GothamBlack;b.TextSize=11;b.AutoButtonColor=false;b.ZIndex=5
+			Instance.new("UICorner",b).CornerRadius=UDim.new(1,0)
+			return b
+		end
+		local lb=arrow(lt or "<",0);local rb=arrow(rt or ">",SW-22)
+		local lbl=Instance.new("TextLabel",box);lbl.Size=UDim2.new(1,-52,1,0);lbl.Position=UDim2.new(0,26,0,0);lbl.BackgroundTransparency=1;lbl.Text=initialText;lbl.TextColor3=ACCENT;lbl.Font=Enum.Font.GothamBlack;lbl.TextSize=IsMobile and 9 or 10;lbl.TextTruncate=Enum.TextTruncate.AtEnd;lbl.ZIndex=5
+		lb.Activated:Connect(function() if _anyKeyListening then return end;onStep(-1) end)
+		rb.Activated:Connect(function() if _anyKeyListening then return end;onStep(1) end)
+		return lbl
+	end
+	mainPage=pages.steal
+	mkSect(mainPage,"Insta Grab")
+	do -- Background (dari PRIMEZ HUB): tab script + HUD steal + tombol ikut berganti
+		local row=mkRow(mainPage,IsMobile and 40 or 44);mkLabel(row,"Background")
+		local pf=Instance.new("Frame",row);pf.Name="BackgroundPreview";pf.Size=UDim2.new(0,40,0,30);pf.Position=UDim2.new(1,-148,0.5,-15);pf.BackgroundColor3=Color3.fromRGB(10,10,12);pf.BackgroundTransparency=0.15;pf.BorderSizePixel=0;pf.ClipsDescendants=true;pf.ZIndex=3
+		Instance.new("UICorner",pf).CornerRadius=UDim.new(0,8)
+		local pst=Instance.new("UIStroke",pf);pst.Color=STROKE;pst.Thickness=1.2;pst.Transparency=0.35
+		local pimg=Instance.new("ImageLabel",pf);pimg.Name="PreviewImage";pimg.Size=UDim2.new(1,0,1,0);pimg.BackgroundTransparency=1;pimg.Image="";pimg.ScaleType=Enum.ScaleType.Crop;pimg.ZIndex=4
+		Instance.new("UICorner",pimg).CornerRadius=UDim.new(0,8)
+		local pph=Instance.new("TextLabel",pf);pph.Name="PreviewPlaceholder";pph.Size=UDim2.new(1,0,1,0);pph.BackgroundTransparency=1;pph.Text="OFF";pph.TextColor3=DIM;pph.Font=Enum.Font.GothamBlack;pph.TextSize=10;pph.ZIndex=5
+		stealBgUpdatePreview=function(idx)
+			if not pf.Parent then return end
+			local c=STEAL_BG_IMAGES[idx]
+			if not c or not c.id or c.id=="" then pimg.Image="";pph.Visible=true;pst.Color=STROKE
+			else pimg.Image=c.id;pph.Visible=false;pst.Color=ACCENT end
+		end
+		stealBgSelectorLabel=Instance.new("TextLabel",row);stealBgSelectorLabel.Size=UDim2.new(0,46,0,22);stealBgSelectorLabel.Position=UDim2.new(1,-78,0.5,-11);stealBgSelectorLabel.BackgroundTransparency=1;stealBgSelectorLabel.Text=STEAL_BG_IMAGES[stealBgIndex].label;stealBgSelectorLabel.TextColor3=ACCENT;stealBgSelectorLabel.Font=Enum.Font.GothamBlack;stealBgSelectorLabel.TextSize=10;stealBgSelectorLabel.ZIndex=4
+		local function mkArrow(txt,xOff,dir)
+			local ab=Instance.new("TextButton",row);ab.Size=UDim2.new(0,20,0,22);ab.Position=UDim2.new(1,xOff,0.5,-11);ab.BackgroundColor3=INP;ab.BorderSizePixel=0;ab.Text=txt;ab.TextColor3=Color3.fromRGB(0,0,0);ab.Font=Enum.Font.GothamBlack;ab.TextSize=11;ab.AutoButtonColor=false;ab.ZIndex=5
+			Instance.new("UICorner",ab).CornerRadius=UDim.new(1,0)
+			ab.Activated:Connect(function()
+				if _anyKeyListening then return end
+				local idx=stealBgIndex+dir
+				if idx<1 then idx=#STEAL_BG_IMAGES end
+				if idx>#STEAL_BG_IMAGES then idx=1 end
+				applyStealBackground(idx);saveConfig()
+			end)
+		end
+		mkArrow("<",-102,-1);mkArrow(">",-28,1)
+		stealBgUpdatePreview(stealBgIndex)
+	end
+	setInstaGrab=mkToggle(mainPage,"Auto Steal",function(on) if on and nv1Enabled then pcall(nv1Stop);if setNv1Visual then setNv1Visual(false) end end;CONFIG.AUTO_STEAL_ENABLED=on;if on then if not pcall(startAutoSteal) then CONFIG.AUTO_STEAL_ENABLED=false;if setInstaGrab then setInstaGrab(false) end end else stopAutoSteal() end;nv1RefreshRadiusLabel();saveConfig() end)
+	setNv1Visual=mkToggle(mainPage,"Normal V1",function(on)
+		if on then
+			if CONFIG.AUTO_STEAL_ENABLED then CONFIG.AUTO_STEAL_ENABLED=false;pcall(stopAutoSteal);if setInstaGrab then setInstaGrab(false) end end
+			if not pcall(nv1Start) then nv1Enabled=false;if setNv1Visual then setNv1Visual(false) end end
+		else
+			nv1Stop()
+		end
+		nv1RefreshRadiusLabel()
+		saveConfig()
+	end)
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"Normal V1 Mode")
+		nv1ModeLabel=mkStepper(row,nv1Mode,function(dir)
+			local index=(nv1Variant-1+dir)%#NV1_VARIANT_NAMES+1
+			local enabled=nv1Enabled
+			if enabled then nv1Stop() end
+			nv1SetMode(NV1_VARIANT_NAMES[index])
+			if nv1ModeLabel then nv1ModeLabel.Text=nv1Mode end
+			if enabled then nv1Start() end
+			nv1RefreshRadiusLabel()
+			saveConfig()
+		end)
+	end
+	do local row=mkRow(mainPage,ROW_H);mkLabel(row,"Steal Radius");radInput=mkBox(row,CONFIG.STEAL_RANGE,58,68,function(v) if v>=0.5 and v<=300 then CONFIG.STEAL_RANGE=v;if progressRadLbl then progressRadLbl.Text=string.format("Radius: %.2g",CONFIG.STEAL_RANGE) end end;saveConfig() end) end
+	do local row=mkRow(mainPage,ROW_H);mkLabel(row,"Normal V1 Radius");nv1RadInput=mkBox(row,nv1Range,58,68,function(v)
+		if v and v>=5 and v<=300 then
+			nv1Range=math.floor(v+0.5)
+			nv1Steal.StealRadius=nv1Variant==6 and 10 or nv1Range
+		end
+		if nv1RadInput then nv1RadInput.Text=tostring(nv1Range) end
+		nv1RefreshRadiusLabel()
+	end) end
+
+	mkSect(mainPage,"Steal Pod")
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"Pod Size")
+		stealPodSizeLabel=mkStepper(row,math.floor(stealPodScale*100+0.5).."%",function(dir)
+			local pct=math.clamp(math.floor(stealPodScale*100+0.5)+dir*10,50,200)
+			if stealPodApplyScale then stealPodApplyScale(pct/100) end
+			if stealPodSizeLabel then stealPodSizeLabel.Text=pct.."%" end
+			saveConfig()
+		end,"-","+")
+	end
+	setStealPodLockVisual=mkToggle(mainPage,"Lock Steal Pod",function(on) if stealPodApplyLock then stealPodApplyLock(on) end;saveConfig() end)
+	setStealPodLockVisual(stealPodLocked)
+
+	mainPage=pages.move
+	mkSect(mainPage,"Movement")
+	mkSect(pages.keybind,"Movement")
+	do local row=mkRow(pages.keybind,ROW_H);mkLabel(row,"Auto Left");mkKB(row,KB.AutoLeft,function(k,isGp) if isGp then KB.AutoLeft.gp=k;KB.AutoLeft.kb=nil else KB.AutoLeft.kb=k;KB.AutoLeft.gp=nil end;saveConfig() end);autoLeftSetVisual=function() end end
+	do local row=mkRow(pages.keybind,ROW_H);mkLabel(row,"Auto Right");mkKB(row,KB.AutoRight,function(k,isGp) if isGp then KB.AutoRight.gp=k;KB.AutoRight.kb=nil else KB.AutoRight.kb=k;KB.AutoRight.gp=nil end;saveConfig() end);autoRightSetVisual=function() end end
+	do local row=mkRow(pages.keybind,ROW_H);mkLabel(row,"Drop Brainrot");mkKB(row,KB.DropBrainrot,function(k,isGp) if isGp then KB.DropBrainrot.gp=k;KB.DropBrainrot.kb=nil else KB.DropBrainrot.kb=k;KB.DropBrainrot.gp=nil end;saveConfig() end);local clk=Instance.new("TextButton",row);clk.Size=UDim2.new(0.58,0,1,0);clk.BackgroundTransparency=1;clk.Text="";clk.ZIndex=2;clk.Activated:Connect(function() runDrop() end) end
+	do local row=mkRow(pages.keybind,ROW_H);mkLabel(row,"TP Down");mkKB(row,KB.TPFloor,function(k,isGp) if isGp then KB.TPFloor.gp=k;KB.TPFloor.kb=nil else KB.TPFloor.kb=k;KB.TPFloor.gp=nil end;saveConfig() end);local clk=Instance.new("TextButton",row);clk.Size=UDim2.new(0.58,0,1,0);clk.BackgroundTransparency=1;clk.Text="";clk.ZIndex=2;clk.Activated:Connect(function() runTPFloor() end) end
+	setAutoTPVisual=mkToggle(mainPage,"Auto TP Down",function(on) autoTPEnabled=on;if on then startAutoTP() else stopAutoTP() end;saveConfig() end)
+	do local row=mkRow(mainPage,ROW_H);mkLabel(row,"TP Height");autoTPHeightBox=mkBox(row,autoTPHeight,64,74,function(v) if v>=0 and v<=500 then autoTPHeight=v else autoTPHeightBox.Text=tostring(autoTPHeight) end;saveConfig() end) end
+	autoTPDownSetVisual=mkToggle(mainPage,"Auto TP Down (Ray)",function(on) autoTPDownEnabled=on;if on then startAutoTPDown() else stopAutoTPDown() end;saveConfig() end)
+	setHoldJumpVisual=mkToggle(mainPage,"Hold Jump",function(on) holdJumpEnabled=on;if on then startHoldJump() else stopHoldJump() end;saveConfig() end)
+	setInfJumpVisual=mkToggle(mainPage,"Infinite Jump",function(on) infJumpEnabled=on end)
+	setUnwalkVisual=mkToggle(mainPage,"Unwalk",function(on) unwalkEnabled=on;if on then startUnwalk() else stopUnwalk() end end)
+	setAntiRagVisual=mkToggle(mainPage,"Anti Ragdoll",function(on) antiRagdollEnabled=on;if on then startAntiRagdoll() else stopAntiRagdoll() end end)
+
+	mainPage=pages.visual
+	mkSect(mainPage,"Visuals")
+	setEspVisual=mkToggle(mainPage,"Player ESP",function(on) if on then enableESP() else disableESP() end end)
+	setStretchRezVisual=mkToggle(mainPage,"FPS Boost",function(on) if on then enableStretchRez() else disableStretchRez() end;saveConfig() end)
+	setAntiLagVisual=mkToggle(mainPage,"Anti Lag",function(on) if on then enableAntiLag() else disableAntiLag() end;saveConfig() end)
+	setTryhardMusicVisual=mkToggle(mainPage,"Música Tryhard",function(on) setTryhardMusic(on) end)
+	setTryhard2MusicVisual=mkToggle(mainPage,"Tryhard 2",function(on) setTryhard2Music(on) end)
+	setTryhardDefMusicVisual=mkToggle(mainPage,"Tryhard Definitivo",function(on) setTryhardDefMusic(on) end)
+	setXdMusicVisual=mkToggle(mainPage,"xd",function(on) setXdMusic(on) end)
+	setMusic67Visual=mkToggle(mainPage,"mambo",function(on) setMusic67(on) end)
+	setMusic3amVisual=mkToggle(mainPage,"3am",function(on) setMusic3am(on) end)
+	setBerettaVisual=mkToggle(mainPage,"beretta",function(on) setBeretta(on) end)
+	setBrasilVisual=mkToggle(mainPage,"brasil",function(on) setBrasil(on) end)
+	setBrasil2Visual=mkToggle(mainPage,"brasil",function(on) setBrasil2(on) end)
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"Sky Theme")
+		local skyIndex=1
+		local current=tostring(currentSkyTheme or _G._primezvsSkyMode or CandySkyOrder[1][2])
+		for i,entry in ipairs(CandySkyOrder) do if entry[2]==current then skyIndex=i;break end end
+		local skyVal=Instance.new("TextLabel",row);skyVal.Size=UDim2.new(0,150,1,0);skyVal.Position=UDim2.new(1,-158,0,0);skyVal.BackgroundTransparency=1;skyVal.Text=CandySkyOrder[skyIndex][2];skyVal.TextColor3=ACCENT;skyVal.Font=Enum.Font.GothamBlack;skyVal.TextSize=11;skyVal.TextXAlignment=Enum.TextXAlignment.Right
+		local clk=Instance.new("TextButton",row);clk.Size=UDim2.new(1,0,1,0);clk.BackgroundTransparency=1;clk.Text="";clk.ZIndex=2
+		setSkyThemeLabel=function(label) for i,e in ipairs(CandySkyOrder) do if e[2]==label then skyIndex=i;skyVal.Text=label;break end end end
+		clk.Activated:Connect(function()
+			if _anyKeyListening then return end
+			skyIndex=skyIndex%#CandySkyOrder+1
+			local label=CandySkyOrder[skyIndex][2]
+			skyVal.Text=label
+			currentSkyTheme=label
+			CandyApplyCustomSky(label)
+			saveConfig()
+		end)
+	end
+
+	mkSect(mainPage,"Theme")
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"Theme Color")
+		primezThemeLabel=mkStepper(row,currentThemeName,function(dir)
+			local idx=1
+			for i,n in ipairs(PRIMEZ_THEME_ORDER) do if n==currentThemeName then idx=i;break end end
+			idx=((idx-1+dir)%#PRIMEZ_THEME_ORDER)+1
+			applyPrimezTheme(PRIMEZ_THEME_ORDER[idx])
+			saveConfig()
+		end)
+	end
+	mkSect(mainPage,"Character")
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"Anim Pack")
+		animSelectorLabel=mkStepper(row,currentAnimPack or "Off",function(dir)
+			local idx=1
+			for i,e in ipairs(ANIM_PACK_ORDER) do if e[2]==currentAnimPack then idx=i;break end end
+			idx=idx+dir
+			if idx<1 then idx=#ANIM_PACK_ORDER end
+			if idx>#ANIM_PACK_ORDER then idx=1 end
+			local n=ANIM_PACK_ORDER[idx][2]
+			if n=="Off" then stopAnimPack() else startAnimPack(n) end
+			saveConfig()
+		end)
+	end
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"Best Avatars")
+		VX7A.label=mkStepper(row,VX7A.labels[VX7A.index+1] or "OFF",function(dir)
+			local pos=VX7A.index+1+dir
+			if pos<1 then pos=#VX7A.labels end
+			if pos>#VX7A.labels then pos=1 end
+			VX7A.apply(pos-1)
+			task.defer(function() pcall(saveConfig) end)
+		end)
+	end
+	mainPage=pages.settings
+	mkSect(mainPage,"Settings")
+	setLockGuiVisual=mkToggle(mainPage,"Lock GUI",function(on) setGuiLock(on) end)
+	setHideMobileVisual=mkToggle(mainPage,"Hide Mobile Buttons",function(on) hideMobileButtons=on;refreshMobileButtonUi();saveConfig() end)
+	setEditMobileVisual=mkToggle(mainPage,"Edit Mobile Buttons",function(on) editMobileButtons=on;refreshMobileButtonUi();saveConfig() end)
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"UI Scale")
+		local function pct() return math.clamp(math.floor(uiScaleValue*100+0.5),50,200) end
+		local uiLbl
+		uiLbl=mkStepper(row,tostring(pct()),function(dir)
+			local p=math.clamp(pct()+dir*10,50,200) -- mentok 50 (min) dan 200 (max)
+			uiScaleValue=p/100
+			uiLbl.Text=tostring(p)
+			applyUiScale()
+			saveConfig()
+		end,"-","+")
+		table.insert(uiSizeSetters,function() uiLbl.Text=tostring(pct()) end)
+	end
+	do
+		local row=mkRow(mainPage,ROW_H);mkLabel(row,"Button Scale")
+		local function pct() return math.clamp(math.floor(mobileButtonScaleValue*100+0.5),50,200) end
+		local btnLbl
+		btnLbl=mkStepper(row,tostring(pct()),function(dir)
+			local p=math.clamp(pct()+dir*10,50,200) -- mentok 50 (min) dan 200 (max)
+			mobileButtonScaleValue=p/100
+			btnLbl.Text=tostring(p)
+			applyMobileButtonScale()
+			saveConfig()
+		end,"-","+")
+		table.insert(mobileSizeSetters,function() btnLbl.Text=tostring(pct()) end)
+	end
+	do local row=mkRow(mainPage,ROW_H);mkLabel(row,"Reset Mobile Buttons");local btn=Instance.new("TextButton",row);btn.Size=UDim2.new(0,64,0,22);btn.Position=UDim2.new(1,-72,0.5,-11);btn.BackgroundColor3=ACCENT;btn.BorderSizePixel=0;btn.Text="RESET";btn.TextColor3=Color3.fromRGB(0,0,0);btn.Font=Enum.Font.GothamBlack;btn.TextSize=10;btn.AutoButtonColor=false;btn.ZIndex=3;Instance.new("UICorner",btn).CornerRadius=UDim.new(1,0);local rst=Instance.new("UIStroke",btn);rst.Color=ACCENT;rst.Thickness=1;rst.Transparency=0.34;btn.MouseEnter:Connect(function() TS:Create(rst,TweenInfo.new(0.12),{Color=ICE,Transparency=0.02}):Play() end);btn.MouseLeave:Connect(function() TS:Create(rst,TweenInfo.new(0.12),{Color=ACCENT,Transparency=0.34}):Play() end);btn.Activated:Connect(function() if _anyKeyListening then return end;resetMobileButtonLayout();saveConfig() end) end
+	mkSect(pages.keybind,"UI")
+	do local row=mkRow(pages.keybind,ROW_H);mkLabel(row,"Hide UI Key");mkKB(row,KB.GuiHide,function(k,isGp) if isGp then KB.GuiHide.gp=k;KB.GuiHide.kb=nil else KB.GuiHide.kb=k;KB.GuiHide.gp=nil end;saveConfig() end) end
+
+		do local row=mkRow(mainPage,ROW_H);mkLabel(row,"Fondos PRIMEZ HUB V2");local btn=Instance.new("TextButton",row);btn.Size=UDim2.new(0,64,0,22);btn.Position=UDim2.new(1,-72,0.5,-11);btn.BackgroundColor3=ACCENT;btn.BorderSizePixel=0;btn.Text="OPEN";btn.TextColor3=Color3.fromRGB(0,0,0);btn.Font=Enum.Font.GothamBlack;btn.TextSize=10;btn.AutoButtonColor=false;btn.ZIndex=3;Instance.new("UICorner",btn).CornerRadius=UDim.new(1,0);local opn=Instance.new("UIStroke",btn);opn.Color=ICE;opn.Thickness=1;opn.Transparency=0.34;btn.MouseEnter:Connect(function() TS:Create(opn,TweenInfo.new(0.12),{Transparency=0.02}):Play() end);btn.MouseLeave:Connect(function() TS:Create(opn,TweenInfo.new(0.12),{Transparency=0.34}):Play() end);setFondosBtnText=function(open) btn.Text=open and "CLOSE" or "OPEN" end;setFondosBtnText(fondosPanelOpen);btn.Activated:Connect(function() if _anyKeyListening then return end;if setFondosPanelVisible then setFondosPanelVisible(not fondosPanelOpen) end end) end
+
+	-- ============================================================
+	--  CONFIG (SAVE / LOAD / DELETE)
+	-- ============================================================
+	mkSect(mainPage,"Config")
+	do
+		local cfgNameBox,cfgStatusLbl,cfgListLbl
+		local cfgSel=0
+		local function cfgStatus(msg,good)
+			if cfgStatusLbl then cfgStatusLbl.Text=msg;cfgStatusLbl.TextColor3=good and ACCENT or Color3.fromRGB(255,110,110) end
+		end
+		local function cfgRefreshList()
+			local list=listConfigProfiles()
+			if cfgListLbl then
+				if #list==0 then cfgListLbl.Text="(kosong)" else
+					if cfgSel<1 or cfgSel>#list then cfgSel=1 end
+					cfgListLbl.Text=list[cfgSel].." ("..cfgSel.."/"..#list..")"
+				end
+			end
+			return list
+		end
+		local function mkCfgBtn(row,txt,cb)
+			local btn=Instance.new("TextButton",row);btn.Size=UDim2.new(0,64,0,22);btn.Position=UDim2.new(1,-72,0.5,-11);btn.BackgroundColor3=ACCENT;btn.BorderSizePixel=0;btn.Text=txt;btn.TextColor3=Color3.fromRGB(0,0,0);btn.Font=Enum.Font.GothamBlack;btn.TextSize=10;btn.AutoButtonColor=false;btn.ZIndex=3
+			Instance.new("UICorner",btn).CornerRadius=UDim.new(1,0)
+			local st=Instance.new("UIStroke",btn);st.Color=ACCENT;st.Thickness=1;st.Transparency=0.34
+			btn.MouseEnter:Connect(function() TS:Create(st,TweenInfo.new(0.12),{Color=ICE,Transparency=0.02}):Play() end)
+			btn.MouseLeave:Connect(function() TS:Create(st,TweenInfo.new(0.12),{Color=ACCENT,Transparency=0.34}):Play() end)
+			btn.Activated:Connect(function() if _anyKeyListening then return end;cb() end)
+			return btn
+		end
+		do
+			local row=mkRow(mainPage,ROW_H);mkLabel(row,"Config Name")
+			cfgNameBox=Instance.new("TextBox",row);cfgNameBox.Size=UDim2.new(0,110,0,22);cfgNameBox.Position=UDim2.new(1,-118,0.5,-11);cfgNameBox.BackgroundColor3=INP;cfgNameBox.BorderSizePixel=0;cfgNameBox.Text="default";cfgNameBox.PlaceholderText="nama config";cfgNameBox.TextColor3=Color3.fromRGB(0,0,0);cfgNameBox.Font=Enum.Font.GothamBlack;cfgNameBox.TextSize=10;cfgNameBox.ClearTextOnFocus=false;cfgNameBox.ZIndex=5
+			Instance.new("UICorner",cfgNameBox).CornerRadius=UDim.new(1,0)
+			local bs=Instance.new("UIStroke",cfgNameBox);bs.Color=ACCENT;bs.Thickness=1;bs.Transparency=0.34
+		end
+		do local row=mkRow(mainPage,ROW_H);mkLabel(row,"Save Config");mkCfgBtn(row,"SAVE",function()
+			local ok,msg=saveConfigProfile(cfgNameBox.Text);cfgStatus(msg,ok);cfgRefreshList()
+		end) end
+		do local row=mkRow(mainPage,ROW_H);mkLabel(row,"Load Config");mkCfgBtn(row,"LOAD",function()
+			local ok,msg=loadConfigProfile(cfgNameBox.Text);cfgStatus(msg,ok)
+		end) end
+		do local row=mkRow(mainPage,ROW_H);mkLabel(row,"Delete Config");mkCfgBtn(row,"DELETE",function()
+			local ok,msg=deleteConfigProfile(cfgNameBox.Text);cfgStatus(msg,ok);cfgRefreshList()
+		end) end
+		do
+			local row=mkRow(mainPage,ROW_H);mkLabel(row,"Saved Configs")
+			cfgListLbl=Instance.new("TextLabel",row);cfgListLbl.Size=UDim2.new(0,150,1,0);cfgListLbl.Position=UDim2.new(1,-158,0,0);cfgListLbl.BackgroundTransparency=1;cfgListLbl.Text="(tap)";cfgListLbl.TextColor3=ACCENT;cfgListLbl.Font=Enum.Font.GothamBlack;cfgListLbl.TextSize=10;cfgListLbl.TextXAlignment=Enum.TextXAlignment.Right
+			local clk=Instance.new("TextButton",row);clk.Size=UDim2.new(1,0,1,0);clk.BackgroundTransparency=1;clk.Text="";clk.ZIndex=2
+			clk.Activated:Connect(function()
+				if _anyKeyListening then return end
+				local list=listConfigProfiles()
+				if #list==0 then cfgSel=0;cfgListLbl.Text="(kosong)";return end
+				cfgSel=cfgSel%#list+1
+				cfgListLbl.Text=list[cfgSel].." ("..cfgSel.."/"..#list..")"
+				cfgNameBox.Text=list[cfgSel]
+			end)
+		end
+		do
+			local row=mkRow(mainPage,ROW_H)
+			cfgStatusLbl=Instance.new("TextLabel",row);cfgStatusLbl.Size=UDim2.new(1,-20,1,0);cfgStatusLbl.Position=UDim2.new(0,10,0,0);cfgStatusLbl.BackgroundTransparency=1;cfgStatusLbl.Text="Auto-save aktif - semua setingan tersimpan otomatis";cfgStatusLbl.TextColor3=ACCENT;cfgStatusLbl.Font=Enum.Font.GothamBold;cfgStatusLbl.TextSize=IsMobile and 8 or 9;cfgStatusLbl.TextXAlignment=Enum.TextXAlignment.Left;cfgStatusLbl.TextWrapped=true
+		end
+		task.spawn(cfgRefreshList)
+	end
+	if setHideMobileVisual then setHideMobileVisual(hideMobileButtons) end
+	if setEditMobileVisual then setEditMobileVisual(editMobileButtons) end
+	setGuiLock(uiLocked,true)
+
+	-- ============================================================
+	--  CONNECTIONS / KEYBINDS
+	-- ============================================================
+	UIS.InputBegan:Connect(function(input,gpe)
+		if _anyKeyListening then return end
+		if input.UserInputType==Enum.UserInputType.Keyboard then if gpe or UIS:GetFocusedTextBox() then return end elseif not isGamepadInput(input) then return end
+		if not isBindableInput(input) then return end
+		local kc=input.KeyCode
+		if kbMatch(KB.LaggerToggle,kc) then toggleLaggerMode();saveConfig()
+		elseif kbMatch(KB.LaggerCarryToggle,kc) then toggleLaggerCarryMode();saveConfig()
+		elseif kbMatch(KB.SpeedToggle,kc) then toggleCarryMode();saveConfig()
+		elseif kbMatch(KB.DropBrainrot,kc) then runDrop()
+		elseif kbMatch(KB.TPFloor,kc) then runTPFloor()
+		elseif kbMatch(KB.InstaReset,kc) then cursedInstaReset()
+		elseif kbMatch(KB.AutoLeft,kc) then autoLeftEnabled=not autoLeftEnabled;if autoLeftEnabled then queueAutoLeftStart() else stopAutoLeft() end;if autoLeftSetVisual then autoLeftSetVisual(autoLeftEnabled) end
+		elseif kbMatch(KB.AutoRight,kc) then autoRightEnabled=not autoRightEnabled;if autoRightEnabled then queueAutoRightStart() else stopAutoRight() end;if autoRightSetVisual then autoRightSetVisual(autoRightEnabled) end
+		elseif kbMatch(KB.AutoBat,kc) then if not autoBatEnabled then startBatAimbot();if autoBatSetVisual then autoBatSetVisual(true) end else stopBatAimbot();if autoBatSetVisual then autoBatSetVisual(false) end end
+		elseif kbMatch(KB.TpBat,kc) then if toggleTpBat then toggleTpBat() end
+		elseif kbMatch(KB.BatV2,kc) then
+			State.BatV2 = not State.BatV2
+			if State.BatV2 then
+				if autoBatEnabled then stopBatAimbot();if autoBatSetVisual then autoBatSetVisual(false) end end
+				startBatV2Aimbot()
+			else
+				stopBatV2Aimbot()
+			end
+			if setBatV2Visual then setBatV2Visual(State.BatV2) end
+		elseif kbMatch(KB.GuiHide,kc) then if main.Visible then hideGui() else showGui() end end
+	end)
+end
+-- ============================================================
+--  MOBILE BUTTONS
+-- ============================================================
+function buildMobileButtons()
+	local old=game:GetService("CoreGui"):FindFirstChild("primezvsMobileButtons");if old then old:Destroy() end
+	local pg=LP:FindFirstChild("PlayerGui");if pg then local o=pg:FindFirstChild("primezvsMobileButtons");if o then o:Destroy() end end
+	local screenGui2 = Instance.new("ScreenGui")
+	screenGui2.Name = "primezvsMobileButtons"
+	screenGui2.ResetOnSpawn = false
+	screenGui2.DisplayOrder = 998
+	screenGui2.IgnoreGuiInset = true
+	pcall(function() screenGui2.Parent = game:GetService("CoreGui") end)
+	if not screenGui2.Parent then screenGui2.Parent = LP:WaitForChild("PlayerGui") end
+	mobileButtonsScreen = screenGui2
+	screenGui2.Enabled = not hideMobileButtons
+	mobileButtonFrames = {}
+
+	-- CleanHub-style colors
+	local MOBILE_BTN_BG     = Color3.fromRGB(14,4,18)
+	local MOBILE_BTN_ACTIVE = Color3.fromRGB(138,43,226)
+	local LIGHT_PINK        = Color3.fromRGB(245,220,255)
+	local BLACK_PURE        = Color3.fromRGB(10, 10, 10)
+	local PURPLE_ACCENT     = Color3.fromRGB(157,78,221)
+
+	local BG_BTN  = MOBILE_BTN_BG
+	local ACCENT  = MOBILE_BTN_ACTIVE
+	local function activeCol() return (currentThemePal and currentThemePal.ACCENT) or MOBILE_BTN_ACTIVE end
+	local TXT_C   = LIGHT_PINK
+	local ICE     = PURPLE_ACCENT
+
+	local BW = 58
+	local BH = 58
+	local COL_GAP = 10
+	local ROW_GAP = 10
+	local COLS, ROWS = 4, 3 -- 3 baris x 4 kolom: 12 tombol, semua muat di layar
+
+	local function mkCornerLocal(p, r)
+		local c = Instance.new("UICorner", p)
+		c.CornerRadius = UDim.new(0, r or 14)
+		return c
+	end
+	local function mkStrokeLocal(p, col, th)
+		local s = Instance.new("UIStroke", p)
+		s.Color = col; s.Thickness = th or 1
+		s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		return s
+	end
+
+	-- Container: 2 columns, 4 rows
+	local container = Instance.new("Frame", screenGui2)
+	container.Name = "MobileButtons"
+	container.AnchorPoint = Vector2.new(1, 0)
+	container.Size = UDim2.new(0, (BW * COLS) + (COL_GAP * (COLS - 1)), 0, (BH * ROWS) + (ROW_GAP * (ROWS - 1)))
+	container.Position = mobileGroupPosition
+		and UDim2.new(mobileGroupPosition.xs or 1, mobileGroupPosition.x or -20, mobileGroupPosition.ys or 0.12, mobileGroupPosition.y or 0)
+		or UDim2.new(1, -20, 0.12, 0)
+	container.BackgroundTransparency = 1
+	container.BorderSizePixel = 0
+	container.Active = false
+	container.ClipsDescendants = false
+	mobileButtonContainerRef = container
+	mobileUIScale = Instance.new("UIScale", container)
+	mobileUIScale.Scale = mobileButtonScaleValue
+
+	local gridLayout = Instance.new("UIGridLayout", container)
+	gridLayout.CellSize = UDim2.new(0, BW, 0, BH)
+	gridLayout.CellPadding = UDim2.new(0, COL_GAP, 0, ROW_GAP)
+	gridLayout.StartCorner = Enum.StartCorner.TopLeft
+	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local DRAG_THRESHOLD = 12
+
+	-- Toggle grid: when edit mode is ON, detach UIGridLayout so buttons can be dragged freely.
+	-- Posisi SELALU eksplisit (tersimpan atau default), tidak pakai grid otomatis,
+	-- jadi tombol tidak pindah tempat saat Edit Mobile Buttons dimatikan / script di-execute ulang.
+	local function applyGridMode()
+		if gridLayout.Parent then gridLayout.Parent = nil end
+		for btnId, data in pairs(mobileButtonFrames) do
+			local saved = mobileButtonPositions[btnId]
+			if saved and type(saved.x) == "number" and type(saved.y) == "number" then
+				data.frame.Position = UDim2.new(0, saved.x, 0, saved.y)
+			else
+				data.frame.Position = data.defaultPosition
+			end
+		end
+	end
+
+	-- ===== BATAS LAYAR: tombol tidak bisa keluar dari tepi HP =====
+	local function btnBounds()
+		local sz = screenGui2.AbsoluteSize
+		local sc = math.max(mobileButtonScaleValue, 0.1)
+		local P = container.Position
+		local cw = container.Size.X.Offset * sc
+		local left = P.X.Scale * sz.X + P.X.Offset - cw -- AnchorPoint (1,0)
+		local top = P.Y.Scale * sz.Y + P.Y.Offset
+		return sz, sc, left, top
+	end
+	local function clampGroup()
+		local sz, sc, left, top = btnBounds()
+		if sz.X < 50 or sz.Y < 50 then return end
+		local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+		for _, d in pairs(mobileButtonFrames) do
+			local p = d.frame.Position
+			minX = math.min(minX, p.X.Offset); minY = math.min(minY, p.Y.Offset)
+			maxX = math.max(maxX, p.X.Offset + BW); maxY = math.max(maxY, p.Y.Offset + BH)
+		end
+		if minX == math.huge then return end
+		local l, r = left + minX * sc, left + maxX * sc
+		local t, b = top + minY * sc, top + maxY * sc
+		local dx, dy = 0, 0
+		if (r - l) >= sz.X or l < 0 then dx = -l elseif r > sz.X then dx = sz.X - r end
+		if (b - t) >= sz.Y or t < 0 then dy = -t elseif b > sz.Y then dy = sz.Y - b end
+		if dx ~= 0 or dy ~= 0 then
+			local P = container.Position
+			container.Position = UDim2.new(P.X.Scale, P.X.Offset + dx, P.Y.Scale, P.Y.Offset + dy)
+		end
+	end
+	local function clampButtons()
+		local sz, sc, left, top = btnBounds()
+		if sz.X < 50 or sz.Y < 50 then return end
+		for id, d in pairs(mobileButtonFrames) do
+			local p = d.frame.Position
+			local loX, loY = -left / sc, -top / sc
+			local hiX = math.max(loX, (sz.X - left) / sc - BW)
+			local hiY = math.max(loY, (sz.Y - top) / sc - BH)
+			local nx = math.clamp(p.X.Offset, loX, hiX)
+			local ny = math.clamp(p.Y.Offset, loY, hiY)
+			if nx ~= p.X.Offset or ny ~= p.Y.Offset then
+				d.frame.Position = UDim2.new(0, nx, 0, ny)
+				if mobileButtonPositions[id] then mobileButtonPositions[id] = { x = nx, y = ny } end
+			end
+		end
+	end
+	local function clampAll()
+		pcall(function() clampGroup(); clampButtons(); clampGroup() end)
+	end
+	mobileClampAll = clampAll
+
+	local _origRefresh = refreshMobileButtonUi
+	refreshMobileButtonUi = function()
+		_origRefresh()
+		applyGridMode()
+		clampAll()
+	end
+
+	local function makeBtn(id, actionKey, label, layoutOrder)
+		local defaultX = ((layoutOrder - 1) % COLS) * (BW + COL_GAP)
+		local defaultY = math.floor((layoutOrder - 1) / COLS) * (BH + ROW_GAP)
+		local saved = mobileButtonPositions[id]
+
+		local btnFrame = Instance.new("Frame", container)
+		btnFrame.Name = "Btn_" .. id
+		btnFrame.Size = UDim2.new(0, BW, 0, BH)
+		btnFrame.Position = UDim2.new(0, saved and saved.x or defaultX, 0, saved and saved.y or defaultY)
+		btnFrame.BackgroundColor3 = BG_BTN
+		btnFrame.BorderSizePixel = 0
+		btnFrame.ZIndex = 16
+		btnFrame.LayoutOrder = layoutOrder
+		mkCornerLocal(btnFrame, 14)
+		local stroke = mkStrokeLocal(btnFrame, PURPLE_ACCENT, 1)
+		stroke.Transparency = 0.8
+		mobileButtonFrames[id] = { frame = btnFrame, stroke = stroke, defaultPosition = UDim2.new(0, defaultX, 0, defaultY) }
+
+		-- background PRIMEZ HUB ikut tampil di tombol
+		local bgImgBtn = Instance.new("ImageLabel", btnFrame)
+		bgImgBtn.Name = "StealBgImage"
+		bgImgBtn.Size = UDim2.new(1, 0, 1, 0)
+		bgImgBtn.BackgroundTransparency = 1
+		bgImgBtn.BorderSizePixel = 0
+		bgImgBtn.ScaleType = Enum.ScaleType.Crop
+		bgImgBtn.ZIndex = 16
+		mkCornerLocal(bgImgBtn, 14)
+		do
+			local cfgBg = STEAL_BG_IMAGES[stealBgIndex]
+			local imgBg = cfgBg and cfgBg.id or ""
+			bgImgBtn.Image = imgBg
+			bgImgBtn.ImageTransparency = imgBg ~= "" and math.min(stealBgImageTransparency + 0.1, 1) or 1
+		end
+		_stealBgButtonImages[btnFrame] = bgImgBtn
+
+		local lbl = Instance.new("TextLabel", btnFrame)
+		lbl.Size = UDim2.new(1, -8, 1, -8)
+		lbl.Position = UDim2.new(0, 4, 0, 2)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = label
+		lbl.TextColor3 = LIGHT_PINK
+		lbl.Font = Enum.Font.GothamBlack
+		lbl.TextSize = 11
+		lbl.TextWrapped = true
+		lbl.TextXAlignment = Enum.TextXAlignment.Center
+		lbl.ZIndex = 17
+
+		local isOn = false
+		local function setActive(on)
+			isOn = on
+			local targetBg = on and activeCol() or MOBILE_BTN_BG
+			local targetTextColor = on and BLACK_PURE or LIGHT_PINK
+			TS:Create(btnFrame, TweenInfo.new(0.15), { BackgroundColor3 = targetBg }):Play()
+			TS:Create(lbl, TweenInfo.new(0.15), { TextColor3 = targetTextColor }):Play()
+			TS:Create(stroke, TweenInfo.new(0.15), { Color = on and activeCol() or PURPLE_ACCENT, Transparency = on and 0.2 or 0.8 }):Play()
+		end
+
+		btnFrame.MouseEnter:Connect(function()
+			if not isOn then
+				TS:Create(btnFrame, TweenInfo.new(0.1), { BackgroundColor3 = activeCol() }):Play()
+				TS:Create(lbl, TweenInfo.new(0.1), { TextColor3 = BLACK_PURE }):Play()
+			end
+		end)
+		btnFrame.MouseLeave:Connect(function()
+			local targetBg = isOn and activeCol() or MOBILE_BTN_BG
+			local targetTx = isOn and BLACK_PURE or LIGHT_PINK
+			TS:Create(btnFrame, TweenInfo.new(0.1), { BackgroundColor3 = targetBg }):Play()
+			TS:Create(lbl, TweenInfo.new(0.1), { TextColor3 = targetTx }):Play()
+		end)
+
+		local activeInput, startPos, buttonStartPos, groupStartPos = nil, nil, nil, nil
+		local moved = false
+		local lastClick = 0
+		local inputEndedHandledAt = 0
+
+		local function runMobileAction()
+			local now = tick()
+			if now - lastClick < 0.08 then return end
+			lastClick = now
+			local action = MobileButtonActions[actionKey]
+			if action then action(setActive, isOn) end
+		end
+
+		local clickArea = Instance.new("TextButton", btnFrame)
+		clickArea.Size = UDim2.new(1, 0, 1, 0)
+		clickArea.BackgroundTransparency = 1
+		clickArea.Text = ""
+		clickArea.ZIndex = 18
+		clickArea.AutoButtonColor = false
+
+		clickArea.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+			activeInput = input
+			startPos = input.Position
+			buttonStartPos = btnFrame.Position
+			groupStartPos = container.Position
+			moved = false
+			input.Changed:Connect(function()
+				if input.UserInputState ~= Enum.UserInputState.End or activeInput ~= input then return end
 				activeInput = nil
 				inputEndedHandledAt = tick()
 				if moved then
