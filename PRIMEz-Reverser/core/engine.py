@@ -76,6 +76,15 @@ async def deobfuscate(
         # 4. Post-processing & Sanitization
         if sanitize:
             raw_out = sanitize_output(raw_out)
+
+        header = (
+            "-- ================================================================\n"
+            "-- This was deobfuscated by PrimeZ R.E.L (Reverse Engineering Lua)\n"
+            f"-- Detected Engine: {detection.name} ({selected_backend})\n"
+            "-- ================================================================\n\n"
+        )
+        if not raw_out.startswith("-- =="):
+            raw_out = header + raw_out
             
         elapsed = time.time() - start_time
         return DeobfuscateResult(

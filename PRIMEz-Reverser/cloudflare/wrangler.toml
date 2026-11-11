@@ -1,4 +1,4 @@
-name = "primez-rel"
+name = "primez-reverser"
 main = "worker.js"
 compatibility_date = "2024-09-23"
 account_id = "c744ddf2a5e5e69a9de254ee0546789b"

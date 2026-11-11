@@ -21,11 +21,11 @@ def dump_bytecode_and_constants(source: str, target_backend: str = "auto") -> st
         backend = det.kind
 
     output = [
-        "════════════════════════════════════════════════════════════════",
-        "  ⚡ PrimeZ R.E.L — Bytecode, Memory & Constant Dumper",
-        f"  Detected Obfuscator: {det.name} ({det.kind})",
-        f"  Confidence:          {det.confidence * 100:.1f}%",
-        "════════════════════════════════════════════════════════════════\n"
+        "-- ================================================================",
+        "-- This was dumped by PrimeZ R.E.L (Reverse Engineering Lua)",
+        f"-- Detected Obfuscator: {det.name} ({det.kind})",
+        f"-- Confidence:          {det.confidence * 100:.1f}%",
+        "-- ================================================================\n"
     ]
 
     # 1. IB3 specialized dumper

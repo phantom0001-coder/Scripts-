@@ -85,20 +85,20 @@ function edgeDump(source) {
     const val = match[1] || match[2] || match[3];
     if (val && val.length > 0 && !strings.includes(val)) {
       strings.push(val);
-      if (strings.length >= 60) break;
+      if (strings.length >= 100) break;
     }
   }
 
   const hexMatches = source.match(/\\x[0-9a-fA-F]{2}/g) || [];
-  const numbers = Array.from(new Set(source.match(/\b\d+(?:\.\d+)?\b/g) || [])).slice(0, 30);
+  const numbers = Array.from(new Set(source.match(/\b\d+(?:\.\d+)?\b/g) || [])).slice(0, 50);
 
   return {
     detected: edgeDetect(source),
     string_constants_count: strings.length,
-    string_constants: strings.slice(0, 25),
-    number_constants: numbers.slice(0, 15),
+    string_constants: strings,
+    number_constants: numbers,
     encoded_hex_sequences: hexMatches.length,
-    entropy_score: Math.min(9.8, (source.length > 500 ? 7.2 : 4.1) + (hexMatches.length > 10 ? 1.5 : 0))
+    entropy_score: Math.min(9.9, (source.length > 500 ? 7.2 : 4.1) + (hexMatches.length > 10 ? 1.8 : 0))
   };
 }
 
@@ -126,6 +126,147 @@ function edgeDeobf(source) {
   // Simplify string concatenations: "a" .. "b" -> "ab"
   cleaned = cleaned.replace(/"([^"]*)"\s*\.\.\s*"([^"]*)"/g, '"$1$2"');
   return cleaned;
+}
+
+function formatDumpFile(source, filename) {
+  const det = edgeDetect(source);
+  const dump = edgeDump(source);
+
+  const lines = [
+    "-- ================================================================",
+    "-- This was dumped by PrimeZ R.E.L (Reverse Engineering Lua)",
+    `-- Target Script:       ${filename || "script.lua"}`,
+    `-- Detected Obfuscator: ${det.name} (${det.kind}) [Confidence: ${det.confidence}%]`,
+    `-- String Pool Size:    ${dump.string_constants_count} unique strings`,
+    `-- Dump Timestamp:      ${new Date().toISOString()}`,
+    "-- ================================================================",
+    "",
+    "----------------------------------------------------------------",
+    "-- [1] EXTRACTED STRING CONSTANTS & IDENTIFIERS (" + dump.string_constants_count + ")",
+    "----------------------------------------------------------------"
+  ];
+
+  if (dump.string_constants.length === 0) {
+    lines.push("-- (No clear string constants extracted)");
+  } else {
+    dump.string_constants.forEach((s, idx) => {
+      lines.push(`[${idx.toString().padStart(3, "0")}] = ${JSON.stringify(s)}`);
+    });
+  }
+
+  lines.push("");
+  lines.push("----------------------------------------------------------------");
+  lines.push("-- [2] EXTRACTED NUMERICAL CONSTANTS (" + dump.number_constants.length + ")",
+    "----------------------------------------------------------------");
+  if (dump.number_constants.length === 0) {
+    lines.push("-- (No numerical constants extracted)");
+  } else {
+    dump.number_constants.forEach((n, idx) => {
+      lines.push(`[${idx.toString().padStart(3, "0")}] = ${n}`);
+    });
+  }
+
+  lines.push("");
+  lines.push("----------------------------------------------------------------");
+  lines.push("-- [3] ENTROPY & HEURISTIC METRICS");
+  lines.push("----------------------------------------------------------------");
+  lines.push(`-- Encoded Hex Sequences:  ${dump.encoded_hex_sequences}`);
+  lines.push(`-- Calculated Entropy:     ${dump.entropy_score.toFixed(2)} / 10`);
+  lines.push(`-- Source Character Count: ${source.length}`);
+  lines.push("");
+  lines.push("----------------------------------------------------------------");
+  lines.push("-- [4] UNESCAPED CONSTANT PREVIEW");
+  lines.push("----------------------------------------------------------------");
+  lines.push(edgeDeobf(source.substring(0, 5000)));
+  lines.push("");
+  lines.push("-- ================================================================");
+  lines.push("-- [End of PrimeZ R.E.L Dump]");
+  lines.push("-- ================================================================");
+
+  return { text: lines.join("\n"), dump, det };
+}
+
+function formatDeobfFile(source, filename) {
+  const det = edgeDetect(source);
+  const clean = edgeDeobf(source);
+
+  const lines = [
+    "-- ================================================================",
+    "-- This was deobfuscated by PrimeZ R.E.L (Reverse Engineering Lua)",
+    `-- Target Script:       ${filename || "script.lua"}`,
+    `-- Detected Engine:     ${det.name} (${det.kind})`,
+    `-- Deobfuscated At:     ${new Date().toISOString()}`,
+    "-- ================================================================",
+    "",
+    clean
+  ];
+
+  return { text: lines.join("\n"), det };
+}
+
+function makeDiscordFileResponse(embed, fileText, outFilename) {
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify({
+    type: 4,
+    data: {
+      embeds: [embed],
+      attachments: [{ id: 0, filename: outFilename, description: "PrimeZ R.E.L Result" }]
+    }
+  }));
+  form.append("files[0]", new Blob([fileText], { type: "text/plain;charset=utf-8" }), outFilename);
+  return new Response(form, { headers: CORS_HEADERS });
+}
+
+async function resolveInteractionInput(interaction) {
+  let source = "";
+  let filename = "script.lua";
+
+  // 1. Check all resolved attachments from Discord
+  if (interaction.data?.resolved?.attachments) {
+    const attachments = Object.values(interaction.data.resolved.attachments);
+    if (attachments.length > 0 && attachments[0].url) {
+      filename = attachments[0].filename || filename;
+      try {
+        const res = await fetch(attachments[0].url);
+        if (res.ok) {
+          source = await res.text();
+        }
+      } catch (err) {
+        console.error("Failed to fetch attachment:", err);
+      }
+    }
+  }
+
+  const options = interaction.data?.options || [];
+
+  // 2. Check URL options or parameters containing a URL
+  if (!source) {
+    for (const opt of options) {
+      if (typeof opt.value === "string" && (opt.name === "url" || opt.value.startsWith("http://") || opt.value.startsWith("https://"))) {
+        try {
+          const res = await fetch(opt.value);
+          if (res.ok) {
+            source = await res.text();
+            const parts = opt.value.split("/");
+            filename = parts[parts.length - 1].split("?")[0] || filename;
+            break;
+          }
+        } catch (err) {
+          console.error("Failed to fetch url:", err);
+        }
+      }
+    }
+  }
+
+  // 3. Check code string or text input
+  if (!source) {
+    const codeOpt = options.find(o => o.name === "code") || options.find(o => typeof o.value === "string" && o.value.trim().length > 0);
+    if (codeOpt && typeof codeOpt.value === "string") {
+      source = codeOpt.value;
+    }
+  }
+
+  return { source: source.trim(), filename };
 }
 
 export default {
@@ -187,9 +328,14 @@ export default {
     // 4. HTTP API: Dump
     if (url.pathname === "/api/reverser/dump" && request.method === "POST") {
       try {
-        const { source } = await request.json();
-        const dump = edgeDump(source || "");
-        return new Response(JSON.stringify(dump), {
+        const { source, filename } = await request.json();
+        const result = formatDumpFile(source || "", filename);
+        return new Response(JSON.stringify({
+          success: true,
+          detection: result.det,
+          dump_text: result.text,
+          strings_count: result.dump.string_constants_count
+        }), {
           headers: { "Content-Type": "application/json", ...CORS_HEADERS }
         });
       } catch (e) {
@@ -200,14 +346,13 @@ export default {
     // 5. HTTP API: Deobfuscate
     if (url.pathname === "/api/reverser/deobf" && request.method === "POST") {
       try {
-        const { source, backend } = await request.json();
-        const det = edgeDetect(source || "");
-        const clean = edgeDeobf(source || "");
+        const { source, filename, backend } = await request.json();
+        const result = formatDeobfFile(source || "", filename);
         return new Response(JSON.stringify({
           success: true,
-          detection: det,
-          backend_used: backend || det.kind,
-          source: clean,
+          detection: result.det,
+          backend_used: backend || result.det.kind,
+          source: result.text,
           duration_sec: 0.02
         }), {
           headers: { "Content-Type": "application/json", ...CORS_HEADERS }
@@ -247,8 +392,9 @@ export default {
 
       // Application Command (Type 2)
       if (interaction.type === 2) {
-        const { name, options } = interaction.data;
+        const { name } = interaction.data;
 
+        // Command: /status
         if (name === "status") {
           return new Response(JSON.stringify({
             type: 4,
@@ -271,10 +417,23 @@ export default {
           }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
         }
 
+        // Command: /detect
         if (name === "detect") {
-          const codeOpt = options?.find(o => o.name === "code")?.value || "";
-          const det = edgeDetect(codeOpt);
+          const { source } = await resolveInteractionInput(interaction);
+          if (!source) {
+            return new Response(JSON.stringify({
+              type: 4,
+              data: {
+                embeds: [{
+                  title: "⚠️ No Script Provided",
+                  description: "Please attach a `.lua` file, provide a direct URL, or paste code.",
+                  color: 0xFF204E
+                }]
+              }
+            }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+          }
 
+          const det = edgeDetect(source);
           return new Response(JSON.stringify({
             type: 4,
             data: {
@@ -292,51 +451,78 @@ export default {
           }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
         }
 
+        // Command: /dump
         if (name === "dump") {
-          const codeOpt = options?.find(o => o.name === "code")?.value || "";
-          const dump = edgeDump(codeOpt);
-          const constList = dump.string_constants.length > 0
-            ? dump.string_constants.slice(0, 10).map((c, i) => `\`[${i}]\` ${c.substring(0, 45)}`).join("\n")
+          const { source, filename } = await resolveInteractionInput(interaction);
+          if (!source) {
+            return new Response(JSON.stringify({
+              type: 4,
+              data: {
+                embeds: [{
+                  title: "⚠️ No Script Provided to Dump",
+                  description: "Please upload an obfuscated `.lua` / `.txt` file, provide a direct raw link, or paste code.",
+                  color: 0xFF204E
+                }]
+              }
+            }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+          }
+
+          const { text, dump, det } = formatDumpFile(source, filename);
+          const outFilename = `dump_${filename.replace(/\.lua$/i, "")}.txt`;
+
+          const constPreview = dump.string_constants.length > 0
+            ? dump.string_constants.slice(0, 8).map((c, i) => `\`[${i}]\` ${c.substring(0, 40)}`).join("\n")
             : "_No clear string constants extracted_";
 
-          return new Response(JSON.stringify({
-            type: 4,
-            data: {
-              embeds: [{
-                title: "📦 PrimeZ R.E.L — Bytecode & Constant Dumper",
-                color: 0x00D2FF,
-                fields: [
-                  { name: "Detected Obfuscator", value: dump.detected.name, inline: true },
-                  { name: "String Constants", value: `${dump.string_constants_count} found`, inline: true },
-                  { name: "Entropy Score", value: `${dump.entropy_score.toFixed(1)} / 10`, inline: true },
-                  { name: "Extracted Strings Sample", value: constList.substring(0, 1000) }
-                ],
-                footer: { text: "PrimeZ R.E.L Edge Dumper • 24/7" }
-              }]
-            }
-          }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+          const embed = {
+            title: "📦 PrimeZ R.E.L — Bytecode & Constant Dump Complete",
+            description: `Target: \`${filename}\`\nOutput file attached below.`,
+            color: 0x00D2FF,
+            fields: [
+              { name: "Detected Obfuscator", value: `**${det.name}** (\`${det.kind}\`)`, inline: true },
+              { name: "String Constants", value: `\`${dump.string_constants_count} found\``, inline: true },
+              { name: "Dump File Size", value: `\`${text.length.toLocaleString()} bytes\``, inline: true },
+              { name: "Constants Sample Preview", value: constPreview.substring(0, 1000) }
+            ],
+            footer: { text: "PrimeZ R.E.L Edge Dumper • 24/7" }
+          };
+
+          return makeDiscordFileResponse(embed, text, outFilename);
         }
 
+        // Command: /deobf
         if (name === "deobf") {
-          const codeOpt = options?.find(o => o.name === "code")?.value || "";
-          const det = edgeDetect(codeOpt);
-          const clean = edgeDeobf(codeOpt);
-          const preview = clean.length > 0 ? "```lua\n" + clean.substring(0, 800) + (clean.length > 800 ? "\n-- [Truncated preview]" : "") + "\n```" : "_No code provided_";
+          const { source, filename } = await resolveInteractionInput(interaction);
+          if (!source) {
+            return new Response(JSON.stringify({
+              type: 4,
+              data: {
+                embeds: [{
+                  title: "⚠️ No Script Provided to Deobfuscate",
+                  description: "Please upload an obfuscated `.lua` file, provide a direct raw link, or paste code.",
+                  color: 0xFF204E
+                }]
+              }
+            }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+          }
 
-          return new Response(JSON.stringify({
-            type: 4,
-            data: {
-              embeds: [{
-                title: "⚡ PrimeZ R.E.L — Deobfuscator",
-                description: `Deobfuscated with **${det.name}** pipeline.`,
-                color: 0xFF204E,
-                fields: [
-                  { name: "Deobfuscated Source Preview", value: preview.substring(0, 1024) }
-                ],
-                footer: { text: "PrimeZ R.E.L Deobfuscation Engine • 24/7" }
-              }]
-            }
-          }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+          const { text, det } = formatDeobfFile(source, filename);
+          const outFilename = `deobfuscated_${filename}`;
+          const snippet = text.substring(0, 600);
+
+          const embed = {
+            title: "⚡ PrimeZ R.E.L — Deobfuscation Complete",
+            description: `Deobfuscated with **${det.name}** pipeline.\nResult file attached below.`,
+            color: 0x00FFA3,
+            fields: [
+              { name: "Detected Obfuscator", value: `**${det.name}**`, inline: true },
+              { name: "Clean Output Size", value: `\`${text.length.toLocaleString()} bytes\``, inline: true },
+              { name: "Code Preview", value: "```lua\n" + snippet + (text.length > 600 ? "\n-- [Truncated preview; full code in attached file]" : "") + "\n```" }
+            ],
+            footer: { text: "PrimeZ R.E.L Deobfuscation Engine • 24/7" }
+          };
+
+          return makeDiscordFileResponse(embed, text, outFilename);
         }
       }
 
