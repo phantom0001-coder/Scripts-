@@ -124,29 +124,58 @@ function edgeDump(source) {
   };
 }
 
-// Edge light deobfuscation (constant fold + string unescape)
+// Edge light deobfuscation (constant fold + string unescape + bytecode unpack)
 function edgeDeobf(source) {
   let cleaned = source;
-  // Decode hex escapes: \x61 -> a
+
+  // 1. Decode string.char(n1, n2, ...) arrays into clean strings
+  cleaned = cleaned.replace(/string\.char\s*\(\s*([\d\s,]+)\s*\)/g, (fullMatch, args) => {
+    try {
+      const bytes = args.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+      if (bytes.length > 0 && bytes.every(b => b >= 0 && b <= 255)) {
+        const decoded = bytes.map(b => (b >= 32 && b <= 126 && b !== 34 && b !== 92) ? String.fromCharCode(b) : `\\${b}`).join('');
+        return `"${decoded}"`;
+      }
+    } catch (_) {}
+    return fullMatch;
+  });
+
+  // 2. Decode hex escapes: \x61 -> a
   cleaned = cleaned.replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => {
     try {
       const code = parseInt(h, 16);
-      return (code >= 32 && code <= 126) ? String.fromCharCode(code) : `\\x${h}`;
+      return (code >= 32 && code <= 126 && code !== 34 && code !== 39 && code !== 92) ? String.fromCharCode(code) : `\\x${h}`;
     } catch {
       return `\\x${h}`;
     }
   });
-  // Decode decimal escapes: \097 -> a
-  cleaned = cleaned.replace(/\\([0-9]{3})/g, (_, d) => {
+
+  // 3. Decode decimal escapes: \97 or \097 -> a
+  cleaned = cleaned.replace(/\\([0-9]{1,3})/g, (_, d) => {
     try {
       const code = parseInt(d, 10);
-      return (code >= 32 && code <= 126) ? String.fromCharCode(code) : `\\${d}`;
+      return (code >= 32 && code <= 126 && code !== 34 && code !== 39 && code !== 92) ? String.fromCharCode(code) : `\\${d}`;
     } catch {
       return `\\${d}`;
     }
   });
-  // Simplify string concatenations: "a" .. "b" -> "ab"
-  cleaned = cleaned.replace(/"([^"]*)"\s*\.\.\s*"([^"]*)"/g, '"$1$2"');
+
+  // 4. Simplify multi-stage string concatenations: "a" .. "b" -> "ab"
+  for (let i = 0; i < 5; i++) {
+    const prev = cleaned;
+    cleaned = cleaned.replace(/"([^"\r\n\\]*)"\s*\.\.\s*"([^"\r\n\\]*)"/g, '"$1$2"');
+    cleaned = cleaned.replace(/'([^'\r\n\\]*)'\s*\.\.\s*'([^'\r\n\\]*)'/g, "'$1$2'");
+    if (cleaned === prev) break;
+  }
+
+  // 5. Structure flattened one-liners into readable lines
+  if (!cleaned.includes("\n") || (cleaned.split("\n").length < 5 && cleaned.length > 300)) {
+    cleaned = cleaned.replace(/;\s*/g, ";\n");
+    cleaned = cleaned.replace(/\bend\s+/g, "end\n");
+    cleaned = cleaned.replace(/\bthen\s+/g, "then\n");
+    cleaned = cleaned.replace(/\bdo\s+/g, "do\n");
+  }
+
   return cleaned;
 }
 
