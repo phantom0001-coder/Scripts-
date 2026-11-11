@@ -268,6 +268,49 @@ function makeDiscordFileResponse(embed, fileText, outFilename) {
   return new Response(form, { headers: CORS_HEADERS });
 }
 
+function extractLoaderUrl(text) {
+  const s = text.trim();
+  if (
+    s.toLowerCase().includes("loadstring") ||
+    s.toLowerCase().includes("httpget") ||
+    s.toLowerCase().includes("httppost") ||
+    s.toLowerCase().includes("request") ||
+    s.startsWith("http://") ||
+    s.startsWith("https://")
+  ) {
+    const match = s.match(/https?:\/\/[^\s"'`<>]+/i);
+    if (match) return match[0];
+  }
+  return null;
+}
+
+async function unwrapLoaderChain(initialText, maxHops = 6) {
+  let current = initialText.trim();
+  let hops = 0;
+  while (hops < maxHops && current.length < 2500) {
+    const targetUrl = extractLoaderUrl(current);
+    if (!targetUrl) break;
+    try {
+      const res = await fetch(targetUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PRIMEz-Reverser/2.0" }
+      });
+      if (res.ok) {
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          current = text.trim();
+          hops++;
+          continue;
+        }
+      }
+    } catch (err) {
+      console.error("Failed to unwrap loader target:", targetUrl, err);
+      break;
+    }
+    break;
+  }
+  return current;
+}
+
 async function resolveInteractionInput(interaction) {
   let source = "";
   let filename = "script.lua";
@@ -290,20 +333,21 @@ async function resolveInteractionInput(interaction) {
 
   const options = interaction.data?.options || [];
 
-  // 2. Check URL options or parameters containing a URL
+  // 2. Check URL options or parameters containing a URL / loadstring wrapper
   if (!source) {
     for (const opt of options) {
-      if (typeof opt.value === "string" && (opt.name === "url" || opt.value.startsWith("http://") || opt.value.startsWith("https://"))) {
-        try {
-          const res = await fetch(opt.value);
-          if (res.ok) {
-            source = await res.text();
-            const parts = opt.value.split("/");
+      if (typeof opt.value === "string") {
+        const val = opt.value.trim();
+        const extracted = extractLoaderUrl(val);
+        if (extracted) {
+          try {
+            source = await unwrapLoaderChain(val);
+            const parts = extracted.split("/");
             filename = parts[parts.length - 1].split("?")[0] || filename;
             break;
+          } catch (err) {
+            console.error("Failed to fetch url from option:", err);
           }
-        } catch (err) {
-          console.error("Failed to fetch url:", err);
         }
       }
     }
@@ -315,6 +359,10 @@ async function resolveInteractionInput(interaction) {
     if (codeOpt && typeof codeOpt.value === "string") {
       source = codeOpt.value;
     }
+  }
+
+  if (source) {
+    source = await unwrapLoaderChain(source);
   }
 
   return { source: source.trim(), filename };
@@ -394,7 +442,8 @@ export default {
     // 4. HTTP API: Dump
     if (url.pathname === "/api/reverser/dump" && request.method === "POST") {
       try {
-        const { source, filename } = await request.json();
+        let { source, filename } = await request.json();
+        source = await unwrapLoaderChain(source || "");
         const result = formatDumpFile(source || "", filename);
         return new Response(JSON.stringify({
           success: true,
@@ -412,7 +461,8 @@ export default {
     // 5. HTTP API: Deobfuscate
     if (url.pathname === "/api/reverser/deobf" && request.method === "POST") {
       try {
-        const { source, filename, backend } = await request.json();
+        let { source, filename, backend } = await request.json();
+        source = await unwrapLoaderChain(source || "");
         const result = formatDeobfFile(source || "", filename);
         return new Response(JSON.stringify({
           success: true,
