@@ -5,6 +5,12 @@
  * and routes deobfuscation/dump requests to the PrimeZ R.E.L kernel.
  */
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-signature-ed25519, x-signature-timestamp"
+};
+
 // Simple Ed25519 signature verifier using Web Crypto API
 async function verifyDiscordSignature(request, publicKey) {
   const signature = request.headers.get("x-signature-ed25519");
@@ -72,6 +78,11 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // 0. Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
     // 1. Health check
     if (url.pathname === "/health" || url.pathname === "/") {
       return new Response(JSON.stringify({
@@ -80,7 +91,7 @@ export default {
         capabilities: ["deobfuscator", "bytecode_dumper", "memory_tracer", "fingerprinter"],
         timestamp: new Date().toISOString()
       }), {
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS }
       });
     }
 
@@ -90,17 +101,17 @@ export default {
         const { source } = await request.json();
         const det = edgeDetect(source || "");
         return new Response(JSON.stringify(det), {
-          headers: { "Content-Type": "application/json" }
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS }
         });
       } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 400 });
+        return new Response(JSON.stringify({ error: e.message }), { status: 400, headers: CORS_HEADERS });
       }
     }
 
     // 3. Discord Interactions Webhook
     if (url.pathname === "/interactions" || url.pathname === "/discord") {
       if (request.method !== "POST") {
-        return new Response("Method not allowed", { status: 405 });
+        return new Response("Method not allowed", { status: 405, headers: CORS_HEADERS });
       }
 
       const pubKey = env.DISCORD_PUBLIC_KEY;
@@ -109,7 +120,7 @@ export default {
       if (pubKey) {
         const { isValid, body } = await verifyDiscordSignature(request, pubKey);
         if (!isValid) {
-          return new Response("Invalid request signature", { status: 401 });
+          return new Response("Invalid request signature", { status: 401, headers: CORS_HEADERS });
         }
         bodyText = body;
       } else {
@@ -121,7 +132,7 @@ export default {
       // Discord PING (Type 1)
       if (interaction.type === 1) {
         return new Response(JSON.stringify({ type: 1 }), {
-          headers: { "Content-Type": "application/json" }
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS }
         });
       }
 
@@ -135,7 +146,7 @@ export default {
             data: {
               embeds: [{
                 title: "⚡ PrimeZ R.E.L — Edge Status",
-                description: "Reverse Engineering Layer Edge Gateway is **Online & Ready**.\nConnected Origin: `" + (env.ORIGIN_URL || "Local") + "`",
+                description: "Reverse Engineering Lua Edge Gateway is **Online & Ready**.\nConnected Origin: `" + (env.ORIGIN_URL || "Local") + "`",
                 color: 0x00FFA3,
                 fields: [
                   { name: "Core Engine", value: "PrimeZ R.E.L v1.0", inline: true },
@@ -145,7 +156,7 @@ export default {
                 footer: { text: "PrimeZ R.E.L • Cloudflare Edge" }
               }]
             }
-          }), { headers: { "Content-Type": "application/json" } });
+          }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
         }
 
         if (name === "detect") {
@@ -166,7 +177,7 @@ export default {
                 footer: { text: "PrimeZ R.E.L Edge Detector" }
               }]
             }
-          }), { headers: { "Content-Type": "application/json" } });
+          }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
         }
 
         if (name === "dump") {
@@ -179,7 +190,7 @@ export default {
                 color: 0x00D2FF
               }]
             }
-          }), { headers: { "Content-Type": "application/json" } });
+          }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
         }
 
         if (name === "deobf") {
@@ -192,12 +203,12 @@ export default {
                 color: 0xFF204E
               }]
             }
-          }), { headers: { "Content-Type": "application/json" } });
+          }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
         }
       }
 
       return new Response(JSON.stringify({ type: 4, data: { content: "Unrecognized command." } }), {
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS }
       });
     }
 
@@ -207,6 +218,6 @@ export default {
       return fetch(originReq);
     }
 
-    return new Response("Not found", { status: 404 });
+    return new Response("Not found", { status: 404, headers: CORS_HEADERS });
   }
 };
