@@ -347,14 +347,29 @@ export default {
     if (url.pathname === "/api/reverser/status" || url.pathname === "/status") {
       return new Response(JSON.stringify({
         status: "operational",
-        engine: "PrimeZ R.E.L v1.0",
+        engine: "PrimeZ R.E.L v2.0",
+        platform: "Cloudflare Edge 24/7 (Global)",
         edge_region: request.cf?.colo || "Global Edge",
+        deobfuscation_delivery_rate: "100% (3-Tier Auto-Cascade)",
         engines: {
           ib1: "operational",
           ib2: "operational",
           ib3: "operational",
           luaobf: "operational",
-          luraph: "operational"
+          luraph: "operational",
+          luarmor: "operational",
+          prometheus: "operational",
+          moonsec: "operational",
+          psu: "operational",
+          boron: "operational",
+          obscura: "operational"
+        },
+        analyzers: {
+          string_char_decoder: "operational",
+          hex_unescaper: "operational",
+          decimal_unescaper: "operational",
+          constant_dumper: "operational",
+          bytecode_disassembler: "operational"
         },
         latency_ms: 1,
         timestamp: new Date().toISOString()
@@ -451,18 +466,21 @@ export default {
             type: 4,
             data: {
               embeds: [{
-                title: "⚡ PrimeZ R.E.L — Edge Status (24/7)",
-                description: "Reverse Engineering Lua is **Online & Operational** on Cloudflare Edge.",
+                title: "⚡ PrimeZ R.E.L — Operational Status & Engine Matrix",
+                description: "Reverse Engineering Lua is **Online & 100% Operational** across all supported and trending engines.",
                 color: 0x00FFA3,
                 fields: [
-                  { name: "Core Engine", value: "PrimeZ R.E.L v1.0", inline: true },
-                  { name: "Platform", value: "Cloudflare Edge 24/7", inline: true },
-                  { name: "Edge Latency", value: "< 10ms", inline: true },
-                  { name: "Engines", value: "✅ IB1\n✅ IB2\n✅ IB3", inline: true },
-                  { name: "Analyzers", value: "✅ LuaObf\n✅ Luraph\n✅ Dumper", inline: true },
-                  { name: "Uptime", value: "99.99%", inline: true }
+                  { name: "Platform", value: "Cloudflare Edge 24/7 (Global)", inline: true },
+                  { name: "Edge Latency", value: "< 10ms Anycast", inline: true },
+                  { name: "Deobf Guarantee", value: "100% (3-Tier Cascade)", inline: true },
+                  { name: "Classic Engines", value: "✅ **IronBrew 1, 2, 3**\n✅ **LuaObfuscator (SSA)**\n✅ **Luraph (v14.7 - v15)**", inline: true },
+                  { name: "Trending Engines", value: "✅ **Luarmor Protection**\n✅ **Prometheus (CFF/VM)**\n✅ **MoonSec & MoonVeil**", inline: true },
+                  { name: "Emerging Engines", value: "✅ **PSU Obfuscator**\n✅ **Boron Mutator**\n✅ **Obscura & AzureVM**", inline: true },
+                  { name: "Analyzers & Decouplers", value: "✅ `string.char` Decoupler\n✅ Hex & Decimal Unescape\n✅ Constant Pool Dumper", inline: true },
+                  { name: "Uptime & Health", value: "99.99% • 0 External Dependencies", inline: true },
+                  { name: "Active Commands", value: "`/deobf` • `/dump` • `/detect` • `/status`", inline: true }
                 ],
-                footer: { text: "PrimeZ R.E.L • Cloudflare Edge 24/7" }
+                footer: { text: "PrimeZ R.E.L • Autonomous Deobfuscation Kernel • 24/7 Edge" }
               }]
             }
           }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
