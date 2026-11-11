@@ -4,7 +4,6 @@ compatibility_date = "2024-09-23"
 account_id = "c744ddf2a5e5e69a9de254ee0546789b"
 
 [vars]
-ORIGIN_URL = "https://primez-studios.onrender.com"
 ENVIRONMENT = "production"
 DISCORD_PUBLIC_KEY = "f3f27f62b5efbd0c758d0fb7adfa053a02a5f7afca029f00e45e18baf8d2887e"
 DISCORD_APPLICATION_ID = "1569712748575723562"
