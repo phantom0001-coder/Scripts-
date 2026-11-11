@@ -126,6 +126,12 @@ async def detect_command(
     app_commands.Choice(name="IronBrew 1", value="ib1"),
     app_commands.Choice(name="LuaObfuscator", value="luaobf"),
     app_commands.Choice(name="Luraph v14/v15", value="luraph"),
+    app_commands.Choice(name="Prometheus (CFF/VM)", value="prometheus"),
+    app_commands.Choice(name="MoonSec / MoonVeil", value="moonsec"),
+    app_commands.Choice(name="Luarmor Cloud Protection", value="luarmor"),
+    app_commands.Choice(name="PSU Obfuscator", value="psu"),
+    app_commands.Choice(name="Boron Obfuscator", value="boron"),
+    app_commands.Choice(name="Obscura / AzureVM", value="obscura"),
 ])
 async def dump_command(
     interaction: discord.Interaction,
@@ -184,6 +190,12 @@ async def dump_command(
     app_commands.Choice(name="IronBrew 3", value="ib3"),
     app_commands.Choice(name="LuaObfuscator", value="luaobf"),
     app_commands.Choice(name="Luraph v14/v15", value="luraph"),
+    app_commands.Choice(name="Prometheus (CFF/VM)", value="prometheus"),
+    app_commands.Choice(name="MoonSec / MoonVeil", value="moonsec"),
+    app_commands.Choice(name="Luarmor Cloud Protection", value="luarmor"),
+    app_commands.Choice(name="PSU Obfuscator", value="psu"),
+    app_commands.Choice(name="Boron Obfuscator", value="boron"),
+    app_commands.Choice(name="Obscura / AzureVM", value="obscura"),
 ])
 async def deobf_command(
     interaction: discord.Interaction,

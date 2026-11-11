@@ -55,6 +55,9 @@ function hexToBuf(hex) {
 // Edge signature detector for instant low-latency analysis
 function edgeDetect(source) {
   const s = source.toLowerCase();
+  if (s.includes("luarmor") || s.includes("api.luarmor.net") || s.includes("v1.luarmor.net")) {
+    return { name: "Luarmor Cloud Protection", kind: "luarmor", confidence: 99 };
+  }
   if (s.includes("--ironbrew3") || s.includes("ironbrew3:") || s.includes("ib3")) {
     return { name: "IronBrew 3", kind: "ib3", confidence: 99 };
   }
@@ -64,8 +67,27 @@ function edgeDetect(source) {
   if (s.includes("luaobfuscator") || s.includes("ferib")) {
     return { name: "LuaObfuscator", kind: "luaobf", confidence: 99 };
   }
+  if (s.includes("prometheus") || s.includes("_cff_")) {
+    return { name: "Prometheus (CFF/VM)", kind: "prometheus", confidence: 95 };
+  }
+  if (s.includes("moonsec") || s.includes("moonveil")) {
+    return { name: "MoonSec / MoonVeil VM", kind: "moonsec", confidence: 95 };
+  }
+  if (s.includes("psu") || s.includes("psu obfuscator")) {
+    return { name: "PSU Obfuscator", kind: "psu", confidence: 95 };
+  }
+  if (s.includes("boron")) {
+    return { name: "Boron Obfuscator", kind: "boron", confidence: 92 };
+  }
+  if (s.includes("obscura") || s.includes("azurevm") || s.includes("clyde")) {
+    return { name: "Obscura / AzureVM Protection", kind: "obscura", confidence: 92 };
+  }
   if (s.includes("luraph") || s.includes("lph_")) {
-    return { name: "Luraph", kind: "luraph", confidence: 95 };
+    let ver = "v15";
+    if (s.includes("14.9")) ver = "v14.9";
+    else if (s.includes("14.8")) ver = "v14.8";
+    else if (s.includes("14.7")) ver = "v14.7";
+    return { name: `Luraph ${ver}`, kind: "luraph", confidence: 95 };
   }
   if (s.includes("ironbrew")) {
     return { name: "IronBrew 2 / Legacy", kind: "ib2", confidence: 85 };

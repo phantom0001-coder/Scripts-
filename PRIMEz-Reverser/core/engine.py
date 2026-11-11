@@ -66,10 +66,10 @@ async def deobfuscate(
             raw_out = await run_ib1(source)
         elif selected_backend == "ib2":
             raw_out = await run_ib2(source)
-        elif selected_backend in ("luraph", "generic"):
-            raw_out = await run_luraph(source, engine_name=selected_backend)
+        elif selected_backend in ("luraph", "generic", "prometheus", "moonsec", "psu", "boron", "obscura", "luarmor"):
+            raw_out = await run_luraph(source, engine_name=selected_backend if selected_backend == "luraph" else "generic")
         else:
-            # Fallback to Luraph behavioral sandbox tracer
+            # Fallback to Luau behavioral sandbox tracer
             raw_out = await run_luraph(source, engine_name="generic")
             selected_backend = "sandbox"
             

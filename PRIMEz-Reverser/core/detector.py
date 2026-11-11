@@ -21,7 +21,8 @@ def extract_features(src: str) -> set[str]:
     literals = [
         "--ironbrew3", "ironbrew3", "ironbrew", "aztupbrew",
         "luaobfuscator", "luraph", "lph_", "moonsec", "moonveil",
-        "prometheus", "getfenv", "setfenv", "loadstring",
+        "prometheus", "luarmor", "psu", "boron", "obscura", "azurevm", "clyde",
+        "getfenv", "setfenv", "loadstring",
         "string.char", "string.byte", "bit32", "bit.bxor",
         "coroutine.wrap", "coroutine.create", "table.concat",
         "math.floor", "return(function", "while true do",
@@ -63,10 +64,18 @@ def map_fingerprint_folder(name: str) -> tuple[str, str, bool]:
         return "luaobf", "LuaObfuscator", True
     if "luraph" in l:
         return "luraph", "Luraph", True
-    if "moonsec" in l:
-        return "unsupported", "MoonSec", False
+    if "luarmor" in l:
+        return "luarmor", "Luarmor Cloud Protection", True
+    if "moonsec" in l or "moonveil" in l:
+        return "moonsec", "MoonSec / MoonVeil", True
     if "prometheus" in l:
-        return "unsupported", "Prometheus", False
+        return "prometheus", "Prometheus (CFF/VM)", True
+    if "psu" in l:
+        return "psu", "PSU Obfuscator", True
+    if "boron" in l:
+        return "boron", "Boron Obfuscator", True
+    if "obscura" in l or "azurevm" in l or "clyde" in l:
+        return "obscura", "Obscura / AzureVM", True
     return "unknown", name, False
 
 def detect_obfuscator(src: str) -> DetectionResult:
@@ -74,12 +83,24 @@ def detect_obfuscator(src: str) -> DetectionResult:
     feats = extract_features(src)
     
     # Direct high-priority signatures
+    if "luarmor" in s or "api.luarmor.net" in s or "v1.luarmor.net" in s or "getgenv().luarmor" in s:
+        return DetectionResult("luarmor", "Luarmor Cloud Protection", 0.99, True, "Direct Luarmor handshake signature")
     if "--ironbrew3" in s or "ironbrew3:" in s:
         return DetectionResult("ib3", "IronBrew 3", 0.99, True, "Direct signature")
     if "aztupbrew" in s:
         return DetectionResult("ib2", "AztupBrew", 0.99, True, "Direct signature")
     if "luaobfuscator" in s:
         return DetectionResult("luaobf", "LuaObfuscator", 0.99, True, "Direct signature")
+    if "prometheus" in s or "_cff_" in s or "promethean" in s:
+        return DetectionResult("prometheus", "Prometheus (CFF/VM)", 0.95, True, "Prometheus control-flow / AST signature")
+    if "moonsec" in s or "moonveil" in s:
+        return DetectionResult("moonsec", "MoonSec / MoonVeil VM", 0.95, True, "MoonSec dispatch signature")
+    if "psu" in s or "psu obfuscator" in s:
+        return DetectionResult("psu", "PSU Obfuscator", 0.95, True, "PSU signature")
+    if "boron" in s:
+        return DetectionResult("boron", "Boron Obfuscator", 0.92, True, "Boron AST mutator signature")
+    if "obscura" in s or "azurevm" in s or "clyde" in s:
+        return DetectionResult("obscura", "Obscura / AzureVM Protection", 0.92, True, "Luau VM signature")
     if "luraph" in s:
         version = "v15"
         if "14.9" in s: version = "v14.9"
