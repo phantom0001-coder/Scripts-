@@ -68,6 +68,25 @@ async function checkBackendHealth(env) {
   }
 }
 
+// PATCH a deferred (type 5) interaction followup with a file attachment.
+async function patchFollowupFile(interaction, embed, fileText, outFilename) {
+  const url = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify({
+    embeds: [embed],
+    attachments: [{ id: 0, filename: outFilename, description: "PrimeZ R.E.L Result" }]
+  }));
+  form.append("files[0]", new Blob([fileText], { type: "text/plain;charset=utf-8" }), outFilename);
+  try {
+    const res = await fetch(url, { method: "PATCH", body: form });
+    if (!res.ok) {
+      console.error("Followup PATCH failed:", res.status, (await res.text()).slice(0, 300));
+    }
+  } catch (e) {
+    console.error("Followup PATCH error:", e);
+  }
+}
+
 // Ed25519 signature verifier using Web Crypto API
 async function verifyDiscordSignature(request, publicKey) {
   const signature = request.headers.get("x-signature-ed25519");
@@ -707,38 +726,39 @@ export default {
             }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
           }
 
-          // FULL ENGINE MODE: submit the job to the Python backend. It runs the
-          // real engines and PATCHes this deferred interaction with the result
-          // file (within Discord's 15-minute followup window).
+          // FULL ENGINE MODE: ACK Discord immediately (DEFERRED), then submit
+          // the job to the Python backend. The backend runs the real engines
+          // and PATCHes the result file into this interaction (15-min window).
           if (backendUrl(env)) {
-            const submit = await callReverserBackend(env, "/api/reverser/deobf_job", {
-              source,
-              filename: filename || "script.lua",
-              interaction_token: interaction.token,
-              application_id: interaction.application_id
-            }, 20000);
+            ctx.waitUntil((async () => {
+              const submit = await callReverserBackend(env, "/api/reverser/deobf_job", {
+                source,
+                filename: filename || "script.lua",
+                interaction_token: interaction.token,
+                application_id: interaction.application_id
+              }, 25000);
 
-            if (submit.ok) {
-              // DEFERRED (type 5): server.py will PATCH the real result shortly.
-              return new Response(JSON.stringify({ type: 5 }), {
-                headers: { "Content-Type": "application/json", ...CORS_HEADERS }
-              });
-            }
+              if (submit.ok) return; // backend will PATCH the real result shortly
 
-            // Backend unreachable — honest warning + clearly-labeled edge cleanup.
-            const result = formatDeobfFile(source, filename);
-            const embed = {
-              title: "⚠️ PrimeZ R.E.L — Engine Backend Unreachable",
-              description: `The full engine backend did not respond (\`${submit.error}\`).\nAttached is an **edge regex cleanup only** — this is NOT real deobfuscation. Bring the backend host (\`server.py\`) up and retry.`,
-              color: 0xFFA500,
-              fields: [
-                { name: "Detected Obfuscator", value: `**${result.det.name}**`, inline: true },
-                { name: "Mode", value: "`edge_regex_fallback` (cosmetic only)", inline: true },
-                { name: "Output Size", value: `\`${result.text.length.toLocaleString()} bytes\``, inline: true }
-              ],
-              footer: { text: "PrimeZ R.E.L • Edge Fallback" }
-            };
-            return makeDiscordFileResponse(embed, result.text, `edgecleanup_${filename}`);
+              // Backend unreachable — PATCH an honest warning + clearly-labeled
+              // edge cleanup so the user is never misled.
+              const result = formatDeobfFile(source, filename);
+              const embed = {
+                title: "⚠️ PrimeZ R.E.L — Engine Backend Unreachable",
+                description: `The full engine backend did not respond (\`${submit.error}\`).\nAttached is an **edge regex cleanup only** — this is NOT real deobfuscation. Check that the backend service is up and retry.`,
+                color: 0xFFA500,
+                fields: [
+                  { name: "Detected Obfuscator", value: `**${result.det.name}**`, inline: true },
+                  { name: "Mode", value: "`edge_regex_fallback` (cosmetic only)", inline: true },
+                  { name: "Output Size", value: `\`${result.text.length.toLocaleString()} bytes\``, inline: true }
+                ],
+                footer: { text: "PrimeZ R.E.L • Edge Fallback" }
+              };
+              await patchFollowupFile(interaction, embed, result.text, `edgecleanup_${filename}`);
+            })());
+            return new Response(JSON.stringify({ type: 5 }), {
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+            });
           }
 
           // EDGE-ONLY MODE: regex cleanup only — labeled honestly.
@@ -768,6 +788,23 @@ export default {
     }
 
     return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: CORS_HEADERS });
+  },
+
+  // Cron trigger (every 10 min): keep-alive ping so the Render free-tier
+  // backend doesn't sleep (it would otherwise cold-start for ~40-60s and
+  // delay /deobf job submissions).
+  async scheduled(event, env, ctx) {
+    const base = backendUrl(env);
+    if (!base) return;
+    ctx.waitUntil((async () => {
+      try {
+        const headers = {};
+        if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
+        await fetch(base + "/api/reverser/status", { headers });
+      } catch (e) {
+        console.error("Backend keep-alive ping failed:", e);
+      }
+    })());
   }
 };
 

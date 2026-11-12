@@ -264,7 +264,24 @@ async def handle_dump(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+def _ensure_bin_permissions():
+    """Ensure the bundled Linux Luau binary is executable (git may commit it
+    without the exec bit from a Windows checkout). No-op on Windows."""
+    candidates = [
+        Path(LUAU_BIN),
+        Path(__file__).resolve().parent / "engines" / "luraph" / "bin" / "luau",
+    ]
+    for p in candidates:
+        try:
+            if p.is_file() and not os.access(str(p), os.X_OK):
+                p.chmod(0o755)
+                print(f"[+] Fixed exec permission on {p}")
+        except Exception:
+            pass
+
+
 def make_app():
+    _ensure_bin_permissions()
     app = web.Application(client_max_size=MAX_BODY_BYTES + 1024 * 1024)
     app.router.add_get("/api/reverser/status", handle_status)
     app.router.add_post("/api/reverser/detect", handle_detect)
