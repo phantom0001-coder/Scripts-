@@ -1,7 +1,15 @@
 /**
  * PrimeZ R.E.L — Cloudflare Worker Edge Gateway
  * Reverse Engineering Lua (Deobfuscator & Memory/Bytecode Dumper)
- * 100% Standalone Cloudflare Edge 24/7 Engine
+ *
+ * Two operating modes:
+ *  - FULL ENGINE MODE — set [vars] REVERSER_BACKEND_URL (wrangler.toml) and the
+ *    secret REVERSER_API_KEY to point at the Python engine host (`server.py`).
+ *    /deobf then submits the job to the REAL engine pipelines (IronBrew,
+ *    LuaObfuscator, Luraph sandbox, 3-tier cascade) via a deferred Discord
+ *    followup; server.py PATCHes the result file back into the interaction.
+ *  - EDGE-ONLY MODE (default) — lightweight regex cleanup only. It CANNOT
+ *    devirtualize VM obfuscators; outputs are honestly labeled as such.
  */
 
 const CORS_HEADERS = {
@@ -9,6 +17,56 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, x-signature-ed25519, x-signature-timestamp"
 };
+
+// ── Full-engine backend configuration ─────────────────────────────────────
+// REVERSER_BACKEND_URL: base URL of the Python engine host running server.py
+// (a Render service URL, or a Cloudflare Tunnel URL for your own machine).
+// REVERSER_API_KEY: shared secret — set it on BOTH sides.
+//   wrangler secret put REVERSER_API_KEY
+function backendUrl(env) {
+  const raw = String(env.REVERSER_BACKEND_URL || "").trim().replace(/\/+$/, "");
+  return raw || null;
+}
+
+async function callReverserBackend(env, path, payload, timeoutMs) {
+  const base = backendUrl(env);
+  if (!base) return { ok: false, error: "backend_not_configured" };
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
+    const res = await fetch(base + path, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs || 20000)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      return { ok: false, error: (data && data.error) || ("HTTP " + res.status) };
+    }
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+async function checkBackendHealth(env) {
+  const base = backendUrl(env);
+  if (!base) return { connected: false, configured: false };
+  try {
+    const headers = {};
+    if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
+    const res = await fetch(base + "/api/reverser/status", {
+      headers,
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return { connected: false, configured: true, error: "HTTP " + res.status };
+    const data = await res.json().catch(() => ({}));
+    return { connected: true, configured: true, info: data };
+  } catch (e) {
+    return { connected: false, configured: true, error: e && e.message ? e.message : String(e) };
+  }
+}
 
 // Ed25519 signature verifier using Web Crypto API
 async function verifyDiscordSignature(request, publicKey) {
@@ -391,45 +449,42 @@ export default {
       });
     }
 
-    // 2. HTTP API: Status Check
+    // 2. HTTP API: Status Check (honest — reports the actual operating mode)
     if (url.pathname === "/api/reverser/status" || url.pathname === "/status") {
+      const health = await checkBackendHealth(env);
       return new Response(JSON.stringify({
         status: "operational",
-        engine: "PrimeZ R.E.L v2.0",
-        platform: "Cloudflare Edge 24/7 (Global)",
+        mode: health.connected ? "full_engine_backend" : "edge_regex_only",
+        backend: health,
         edge_region: request.cf?.colo || "Global Edge",
-        deobfuscation_delivery_rate: "100% (3-Tier Auto-Cascade)",
-        engines: {
-          ib1: "operational",
-          ib2: "operational",
-          ib3: "operational",
-          luaobf: "operational",
-          luraph: "operational",
-          luarmor: "operational",
-          prometheus: "operational",
-          moonsec: "operational",
-          psu: "operational",
-          boron: "operational",
-          obscura: "operational"
-        },
-        analyzers: {
-          string_char_decoder: "operational",
-          hex_unescaper: "operational",
-          decimal_unescaper: "operational",
-          constant_dumper: "operational",
-          bytecode_disassembler: "operational"
-        },
-        latency_ms: 1,
+        edge_capabilities: [
+          "fingerprinting",
+          "string_char_decode",
+          "hex_decimal_unescape",
+          "concat_folding",
+          "constant_pool_dump"
+        ],
+        note: health.connected
+          ? "Full Python engine backend connected — /deobf runs real engine pipelines."
+          : "Edge-only mode: /deobf is a lightweight regex cleanup and CANNOT devirtualize VM obfuscators. Set REVERSER_BACKEND_URL to enable real engines.",
         timestamp: new Date().toISOString()
       }), {
         headers: { "Content-Type": "application/json", ...CORS_HEADERS }
       });
     }
 
-    // 3. HTTP API: Detect
+    // 3. HTTP API: Detect (uses the backend fingerprint DB when available)
     if (url.pathname === "/api/reverser/detect" && request.method === "POST") {
       try {
         const { source } = await request.json();
+        if (backendUrl(env)) {
+          const bres = await callReverserBackend(env, "/api/reverser/detect", { source }, 8000);
+          if (bres.ok && bres.data.detection) {
+            return new Response(JSON.stringify(bres.data.detection), {
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+            });
+          }
+        }
         const det = edgeDetect(source || "");
         return new Response(JSON.stringify(det), {
           headers: { "Content-Type": "application/json", ...CORS_HEADERS }
@@ -458,16 +513,43 @@ export default {
       }
     }
 
-    // 5. HTTP API: Deobfuscate
+    // 5. HTTP API: Deobfuscate (proxied to the real engines when configured)
     if (url.pathname === "/api/reverser/deobf" && request.method === "POST") {
       try {
         let { source, filename, backend } = await request.json();
         source = await unwrapLoaderChain(source || "");
         const result = formatDeobfFile(source || "", filename);
+        if (backendUrl(env)) {
+          const bres = await callReverserBackend(env, "/api/reverser/deobf", { source, backend }, 170000);
+          if (bres.ok) {
+            return new Response(JSON.stringify({
+              success: true,
+              mode: "full_engine_backend",
+              detection: bres.data.detection,
+              backend_used: bres.data.backend_used,
+              source: bres.data.source,
+              duration_sec: bres.data.duration_sec
+            }), {
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+            });
+          }
+          return new Response(JSON.stringify({
+            success: true,
+            mode: "edge_regex_fallback",
+            degraded_reason: "backend_unreachable: " + bres.error,
+            detection: result.det,
+            backend_used: "edge_regex_fallback",
+            source: result.text,
+            duration_sec: 0.02
+          }), {
+            headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+          });
+        }
         return new Response(JSON.stringify({
           success: true,
+          mode: "edge_regex_only",
           detection: result.det,
-          backend_used: backend || result.det.kind,
+          backend_used: "edge_regex_only",
           source: result.text,
           duration_sec: 0.02
         }), {
@@ -510,30 +592,30 @@ export default {
       if (interaction.type === 2) {
         const { name } = interaction.data;
 
-        // Command: /status
+        // Command: /status (honest — shows the actual operating mode)
         if (name === "status") {
-          return new Response(JSON.stringify({
-            type: 4,
-            data: {
-              embeds: [{
-                title: "⚡ PrimeZ R.E.L — Operational Status & Engine Matrix",
-                description: "Reverse Engineering Lua is **Online & 100% Operational** across all supported and trending engines.",
-                color: 0x00FFA3,
-                fields: [
-                  { name: "Platform", value: "Cloudflare Edge 24/7 (Global)", inline: true },
-                  { name: "Edge Latency", value: "< 10ms Anycast", inline: true },
-                  { name: "Deobf Guarantee", value: "100% (3-Tier Cascade)", inline: true },
-                  { name: "Classic Engines", value: "✅ **IronBrew 1, 2, 3**\n✅ **LuaObfuscator (SSA)**\n✅ **Luraph (v14.7 - v15)**", inline: true },
-                  { name: "Trending Engines", value: "✅ **Luarmor Protection**\n✅ **Prometheus (CFF/VM)**\n✅ **MoonSec & MoonVeil**", inline: true },
-                  { name: "Emerging Engines", value: "✅ **PSU Obfuscator**\n✅ **Boron Mutator**\n✅ **Obscura & AzureVM**", inline: true },
-                  { name: "Analyzers & Decouplers", value: "✅ `string.char` Decoupler\n✅ Hex & Decimal Unescape\n✅ Constant Pool Dumper", inline: true },
-                  { name: "Uptime & Health", value: "99.99% • 0 External Dependencies", inline: true },
-                  { name: "Active Commands", value: "`/deobf` • `/dump` • `/detect` • `/status`", inline: true }
-                ],
-                footer: { text: "PrimeZ R.E.L • Autonomous Deobfuscation Kernel • 24/7 Edge" }
-              }]
-            }
-          }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+          const health = await checkBackendHealth(env);
+          const fullMode = health.connected;
+          const embed = {
+            title: "⚡ PrimeZ R.E.L — Operational Status",
+            description: fullMode
+              ? "Full engine backend **connected** — `/deobf` runs the real IronBrew / LuaObfuscator / Luraph pipelines (3-tier cascade)."
+              : (backendUrl(env)
+                ? "Engine backend **configured but unreachable** — `/deobf` will return a clearly-labeled edge regex cleanup instead of real deobfuscation. Start `server.py` on the engine host."
+                : "Running in **edge-only mode** — `/deobf` is a lightweight regex cleanup and **cannot** devirtualize VM obfuscators. Set `REVERSER_BACKEND_URL` to connect the real engines."),
+            color: fullMode ? 0x00FFA3 : 0xFFA500,
+            fields: [
+              { name: "Mode", value: fullMode ? "`full_engine_backend`" : "`edge_regex_only`", inline: true },
+              { name: "Backend Configured", value: backendUrl(env) ? "✅ Yes" : "❌ No (`REVERSER_BACKEND_URL` empty)", inline: true },
+              { name: "Backend Health", value: fullMode ? "🟢 Connected" : "🔴 Unreachable", inline: true },
+              { name: "Edge Tools (always on)", value: "✅ Fingerprinting (`/detect`)\n✅ `string.char` decode + escape unrolling\n✅ Constant pool dump (`/dump`)", inline: true },
+              { name: "Active Commands", value: "`/deobf` • `/dump` • `/detect` • `/status`", inline: true }
+            ],
+            footer: { text: "PrimeZ R.E.L Edge Gateway" }
+          };
+          return new Response(JSON.stringify({ type: 4, data: { embeds: [embed] } }), {
+            headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+          });
         }
 
         // Command: /detect
@@ -625,20 +707,55 @@ export default {
             }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
           }
 
+          // FULL ENGINE MODE: submit the job to the Python backend. It runs the
+          // real engines and PATCHes this deferred interaction with the result
+          // file (within Discord's 15-minute followup window).
+          if (backendUrl(env)) {
+            const submit = await callReverserBackend(env, "/api/reverser/deobf_job", {
+              source,
+              filename: filename || "script.lua",
+              interaction_token: interaction.token,
+              application_id: interaction.application_id
+            }, 20000);
+
+            if (submit.ok) {
+              // DEFERRED (type 5): server.py will PATCH the real result shortly.
+              return new Response(JSON.stringify({ type: 5 }), {
+                headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+              });
+            }
+
+            // Backend unreachable — honest warning + clearly-labeled edge cleanup.
+            const result = formatDeobfFile(source, filename);
+            const embed = {
+              title: "⚠️ PrimeZ R.E.L — Engine Backend Unreachable",
+              description: `The full engine backend did not respond (\`${submit.error}\`).\nAttached is an **edge regex cleanup only** — this is NOT real deobfuscation. Bring the backend host (\`server.py\`) up and retry.`,
+              color: 0xFFA500,
+              fields: [
+                { name: "Detected Obfuscator", value: `**${result.det.name}**`, inline: true },
+                { name: "Mode", value: "`edge_regex_fallback` (cosmetic only)", inline: true },
+                { name: "Output Size", value: `\`${result.text.length.toLocaleString()} bytes\``, inline: true }
+              ],
+              footer: { text: "PrimeZ R.E.L • Edge Fallback" }
+            };
+            return makeDiscordFileResponse(embed, result.text, `edgecleanup_${filename}`);
+          }
+
+          // EDGE-ONLY MODE: regex cleanup only — labeled honestly.
           const { text, det } = formatDeobfFile(source, filename);
           const outFilename = `deobfuscated_${filename}`;
           const snippet = text.substring(0, 600);
 
           const embed = {
-            title: "⚡ PrimeZ R.E.L — Deobfuscation Complete",
-            description: `Deobfuscated with **${det.name}** pipeline.\nResult file attached below.`,
-            color: 0x00FFA3,
+            title: "⚠️ PrimeZ R.E.L — Edge Cleanup Only (Real Engines Not Connected)",
+            description: "No engine backend is configured (`REVERSER_BACKEND_URL` is empty). This output is a **lightweight regex cleanup** — `string.char` decoding and escape unrolling only. It does **not** devirtualize VM obfuscators. See `cloudflare/README.md` to connect the full engine backend.",
+            color: 0xFFA500,
             fields: [
               { name: "Detected Obfuscator", value: `**${det.name}**`, inline: true },
               { name: "Clean Output Size", value: `\`${text.length.toLocaleString()} bytes\``, inline: true },
               { name: "Code Preview", value: "```lua\n" + snippet + (text.length > 600 ? "\n-- [Truncated preview; full code in attached file]" : "") + "\n```" }
             ],
-            footer: { text: "PrimeZ R.E.L Deobfuscation Engine • 24/7" }
+            footer: { text: "PrimeZ R.E.L Edge Mode • set REVERSER_BACKEND_URL for real deobfuscation" }
           };
 
           return makeDiscordFileResponse(embed, text, outFilename);
@@ -653,3 +770,4 @@ export default {
     return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: CORS_HEADERS });
   }
 };
+

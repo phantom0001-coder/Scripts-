@@ -23,6 +23,7 @@ from config import (
     PRIMEZ_COLOR_SUCCESS,
     PRIMEZ_COLOR_ERROR,
     PRIMEZ_COLOR_INFO,
+    PRIMEZ_COLOR_WARNING,
     LUAU_BIN,
     IB2_CLI,
     LURAPH_CLI
@@ -232,6 +233,25 @@ async def deobf_command(
         err_embed.description = f"**Engine**: `{res.backend_used}`\n**Error Details**:\n```\n{res.error[:1500]}\n```"
         await interaction.followup.send(embed=err_embed)
         return
+
+    # Honest fallback labeling: when every engine fails, the kernel's Tier 3
+    # "delivery guarantee" preserves the ORIGINAL input (raw_fallback). Never
+    # present that as a real deobfuscation.
+    if "raw_fallback" in (res.backend_used or ""):
+        fb_embed = make_primez_embed("Deobfuscation Fallback — Engines Failed", color=PRIMEZ_COLOR_WARNING)
+        fb_embed.description = (
+            "All deobfuscation engines failed, so the attached file is your **original "
+            "input preserved** (see the `-- [Diagnostic]` header lines for reasons)."
+        )
+        fb_embed.add_field(name="Detected Type", value=res.detection.name, inline=True)
+        fb_embed.add_field(name="Pipeline Used", value=f"`{res.backend_used}`", inline=True)
+        fb_embed.add_field(name="Duration", value=f"`{res.duration_sec:.2f}s`", inline=True)
+        file_bytes = res.source.encode("utf-8")
+        await interaction.followup.send(
+            embed=fb_embed,
+            file=discord.File(io.BytesIO(file_bytes), filename=filename)
+        )
+        return
         
     succ_embed = make_primez_embed("Deobfuscation Completed Successfully", color=PRIMEZ_COLOR_SUCCESS)
     succ_embed.add_field(name="Detected Type", value=res.detection.name, inline=True)
@@ -259,3 +279,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+

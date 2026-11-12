@@ -7,3 +7,11 @@ account_id = "c744ddf2a5e5e69a9de254ee0546789b"
 ENVIRONMENT = "production"
 DISCORD_PUBLIC_KEY = "f3f27f62b5efbd0c758d0fb7adfa053a02a5f7afca029f00e45e18baf8d2887e"
 DISCORD_APPLICATION_ID = "1569712748575723562"
+# FULL ENGINE MODE: base URL of the Python engine host running server.py
+# (a Render service URL, or a Cloudflare Tunnel URL for your own machine).
+# Leave empty for edge-only regex mode (cleanup only — NOT real deobfuscation).
+REVERSER_BACKEND_URL = ""
+
+# Required secret (do NOT commit it here) — must match REVERSER_API_KEY on
+# the server.py host:
+#   npx wrangler secret put REVERSER_API_KEY
