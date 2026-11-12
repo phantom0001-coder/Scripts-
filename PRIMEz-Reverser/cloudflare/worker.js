@@ -28,31 +28,43 @@ function backendUrl(env) {
   return raw || null;
 }
 
-async function callReverserBackend(env, path, payload, timeoutMs) {
-  const base = backendUrl(env);
-  if (!base) return { ok: false, error: "backend_not_configured" };
-  try {
-    const headers = { "Content-Type": "application/json" };
-    if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
-    const res = await fetch(base + path, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs || 20000)
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success === false) {
-      return { ok: false, error: (data && data.error) || ("HTTP " + res.status) };
-    }
-    return { ok: true, data };
-  } catch (e) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
-  }
+function fallbackUrl(env) {
+  const raw = String(env.REVERSER_BACKEND_URL_FALLBACK || "").trim().replace(/\/+$/, "");
+  return raw || null;
 }
 
-async function checkBackendHealth(env) {
-  const base = backendUrl(env);
-  if (!base) return { connected: false, configured: false };
+// Primary first, fallback second — jobs try them in order.
+function backendUrls(env) {
+  return [backendUrl(env), fallbackUrl(env)].filter(Boolean);
+}
+
+async function callReverserBackend(env, path, payload, timeoutMs) {
+  const urls = backendUrls(env);
+  if (urls.length === 0) return { ok: false, error: "backend_not_configured" };
+  const errors = [];
+  for (const base of urls) {
+    try {
+      const headers = { "Content-Type": "application/json" };
+      if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
+      const res = await fetch(base + path, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(timeoutMs || 20000)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success !== false) {
+        return { ok: true, data, base };
+      }
+      errors.push(`${base}: ${(data && data.error) || ("HTTP " + res.status)}`);
+    } catch (e) {
+      errors.push(`${base}: ${e && e.message ? e.message : String(e)}`);
+    }
+  }
+  return { ok: false, error: errors.join(" | ") };
+}
+
+async function probeBackend(base, env) {
   try {
     const headers = {};
     if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
@@ -60,12 +72,27 @@ async function checkBackendHealth(env) {
       headers,
       signal: AbortSignal.timeout(5000)
     });
-    if (!res.ok) return { connected: false, configured: true, error: "HTTP " + res.status };
+    if (!res.ok) return { connected: false, error: "HTTP " + res.status };
     const data = await res.json().catch(() => ({}));
-    return { connected: true, configured: true, info: data };
+    return { connected: true, info: data };
   } catch (e) {
-    return { connected: false, configured: true, error: e && e.message ? e.message : String(e) };
+    return { connected: false, error: e && e.message ? e.message : String(e) };
   }
+}
+
+async function checkBackendHealth(env) {
+  const urls = backendUrls(env);
+  if (urls.length === 0) return { connected: false, configured: false };
+  const results = [];
+  for (const base of urls) {
+    results.push(await probeBackend(base, env));
+  }
+  const connected = results.some((r) => r.connected);
+  return {
+    connected,
+    configured: true,
+    backends: urls.map((u, i) => ({ url: u, connected: results[i].connected, error: results[i].error || null }))
+  };
 }
 
 // PATCH a deferred (type 5) interaction followup with a file attachment.
@@ -496,7 +523,7 @@ export default {
     if (url.pathname === "/api/reverser/detect" && request.method === "POST") {
       try {
         const { source } = await request.json();
-        if (backendUrl(env)) {
+        if (backendUrls(env).length > 0) {
           const bres = await callReverserBackend(env, "/api/reverser/detect", { source }, 8000);
           if (bres.ok && bres.data.detection) {
             return new Response(JSON.stringify(bres.data.detection), {
@@ -538,7 +565,7 @@ export default {
         let { source, filename, backend } = await request.json();
         source = await unwrapLoaderChain(source || "");
         const result = formatDeobfFile(source || "", filename);
-        if (backendUrl(env)) {
+        if (backendUrls(env).length > 0) {
           const bres = await callReverserBackend(env, "/api/reverser/deobf", { source, backend }, 170000);
           if (bres.ok) {
             return new Response(JSON.stringify({
@@ -614,19 +641,22 @@ export default {
         // Command: /status (honest — shows the actual operating mode)
         if (name === "status") {
           const health = await checkBackendHealth(env);
+          const urls = backendUrls(env);
           const fullMode = health.connected;
+          const backendList = urls.length
+            ? urls.map((u, i) => `${health.backends[i].connected ? "🟢" : "🔴"} \`${u}\``).join("\n")
+            : "❌ None configured";
           const embed = {
             title: "⚡ PrimeZ R.E.L — Operational Status",
             description: fullMode
-              ? "Full engine backend **connected** — `/deobf` runs the real IronBrew / LuaObfuscator / Luraph pipelines (3-tier cascade)."
-              : (backendUrl(env)
-                ? "Engine backend **configured but unreachable** — `/deobf` will return a clearly-labeled edge regex cleanup instead of real deobfuscation. Start `server.py` on the engine host."
+              ? "Engine backend **connected** — `/deobf` runs the real IronBrew / LuaObfuscator / Luraph pipelines (3-tier cascade)."
+              : (urls.length
+                ? "All configured engine backends are **unreachable** — `/deobf` will return a clearly-labeled edge regex cleanup instead of real deobfuscation. Check the backend service(s)."
                 : "Running in **edge-only mode** — `/deobf` is a lightweight regex cleanup and **cannot** devirtualize VM obfuscators. Set `REVERSER_BACKEND_URL` to connect the real engines."),
             color: fullMode ? 0x00FFA3 : 0xFFA500,
             fields: [
               { name: "Mode", value: fullMode ? "`full_engine_backend`" : "`edge_regex_only`", inline: true },
-              { name: "Backend Configured", value: backendUrl(env) ? "✅ Yes" : "❌ No (`REVERSER_BACKEND_URL` empty)", inline: true },
-              { name: "Backend Health", value: fullMode ? "🟢 Connected" : "🔴 Unreachable", inline: true },
+              { name: "Backends (in failover order)", value: backendList, inline: false },
               { name: "Edge Tools (always on)", value: "✅ Fingerprinting (`/detect`)\n✅ `string.char` decode + escape unrolling\n✅ Constant pool dump (`/dump`)", inline: true },
               { name: "Active Commands", value: "`/deobf` • `/dump` • `/detect` • `/status`", inline: true }
             ],
@@ -729,7 +759,7 @@ export default {
           // FULL ENGINE MODE: ACK Discord immediately (DEFERRED), then submit
           // the job to the Python backend. The backend runs the real engines
           // and PATCHes the result file into this interaction (15-min window).
-          if (backendUrl(env)) {
+          if (backendUrls(env).length > 0) {
             ctx.waitUntil((async () => {
               const submit = await callReverserBackend(env, "/api/reverser/deobf_job", {
                 source,
@@ -745,7 +775,7 @@ export default {
               const result = formatDeobfFile(source, filename);
               const embed = {
                 title: "⚠️ PrimeZ R.E.L — Engine Backend Unreachable",
-                description: `The full engine backend did not respond (\`${submit.error}\`).\nAttached is an **edge regex cleanup only** — this is NOT real deobfuscation. Check that the backend service is up and retry.`,
+                description: `The full engine backend did not respond (\`${String(submit.error).slice(0, 200)}\`).\nAttached is an **edge regex cleanup only** — this is NOT real deobfuscation. Check that the backend service is up and retry.`,
                 color: 0xFFA500,
                 fields: [
                   { name: "Detected Obfuscator", value: `**${result.det.name}**`, inline: true },
@@ -790,19 +820,21 @@ export default {
     return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: CORS_HEADERS });
   },
 
-  // Cron trigger (every 10 min): keep-alive ping so the Render free-tier
-  // backend doesn't sleep (it would otherwise cold-start for ~40-60s and
-  // delay /deobf job submissions).
+  // Cron trigger (every 10 min): keep-alive ping so free-tier backends
+  // (e.g. Render) don't sleep (they would otherwise cold-start for ~40-60s
+  // and delay /deobf job submissions). Pings primary AND fallback.
   async scheduled(event, env, ctx) {
-    const base = backendUrl(env);
-    if (!base) return;
+    const urls = backendUrls(env);
+    if (urls.length === 0) return;
     ctx.waitUntil((async () => {
-      try {
-        const headers = {};
-        if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
-        await fetch(base + "/api/reverser/status", { headers });
-      } catch (e) {
-        console.error("Backend keep-alive ping failed:", e);
+      for (const base of urls) {
+        try {
+          const headers = {};
+          if (env.REVERSER_API_KEY) headers["X-API-Key"] = env.REVERSER_API_KEY;
+          await fetch(base + "/api/reverser/status", { headers });
+        } catch (e) {
+          console.error("Backend keep-alive ping failed:", base, e);
+        }
       }
     })());
   }
