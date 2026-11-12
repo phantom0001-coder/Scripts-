@@ -7,13 +7,13 @@ account_id = "c744ddf2a5e5e69a9de254ee0546789b"
 ENVIRONMENT = "production"
 DISCORD_PUBLIC_KEY = "f3f27f62b5efbd0c758d0fb7adfa053a02a5f7afca029f00e45e18baf8d2887e"
 DISCORD_APPLICATION_ID = "1569712748575723562"
-# Full engine backend: the Render service hosting PRIMEz-Reverser/server.py.
-# Leave empty for edge-only regex mode (cleanup only — NOT real deobfuscation).
-REVERSER_BACKEND_URL = "https://primez-rel-api.onrender.com"
-# Optional failover backend, tried when the primary fails. Fill this later if
-# you add a second engine host (e.g. a Cloudflare Tunnel URL from your own PC
-# or a Cloudflare Container) — then optionally swap the two to change priority.
-REVERSER_BACKEND_URL_FALLBACK = ""
+# Full engine backend: Render service hosting PRIMEz-Reverser/server.py
+# (repo: Primez-REL). Leave empty for edge-only regex mode.
+REVERSER_BACKEND_URL = "https://primez-rel.onrender.com"
+# Failover backend, tried when the primary fails: the older primez-rel-api
+# service (tracks Scripts- main, serves the same server.py once its start
+# command is fixed). Swap the two URLs any time to change priority.
+REVERSER_BACKEND_URL_FALLBACK = "https://primez-rel-api.onrender.com"
 
 # Required secret (do NOT commit it here) — must match the REVERSER_API_KEY
 # environment variable on the Render service:

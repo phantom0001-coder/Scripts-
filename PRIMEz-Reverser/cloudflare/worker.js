@@ -162,7 +162,18 @@ function edgeDetect(source) {
   if (s.includes("luarmor") || s.includes("api.luarmor.net") || s.includes("v1.luarmor.net")) {
     return { name: "Luarmor Cloud Protection", kind: "luarmor", confidence: 99 };
   }
-  if (s.includes("--ironbrew3") || s.includes("ironbrew3:") || s.includes("ib3")) {
+  // Luraph MUST be checked before IronBrew: VM dumps are full of random
+  // base64 noise where short substrings like "ib3" appear by chance.
+  if (s.includes("luraph") || s.includes("lph_")) {
+    let ver = "v15";
+    if (s.includes("14.9")) ver = "v14.9";
+    else if (s.includes("14.8")) ver = "v14.8";
+    else if (s.includes("14.7")) ver = "v14.7";
+    return { name: `Luraph ${ver}`, kind: "luraph", confidence: 95 };
+  }
+  // Strict IronBrew 3 markers only — a bare "ib3" substring false-positives
+  // on obfuscation noise.
+  if (s.includes("--ironbrew3") || s.includes("ironbrew3:")) {
     return { name: "IronBrew 3", kind: "ib3", confidence: 99 };
   }
   if (s.includes("aztupbrew") || s.includes("aztup")) {
@@ -185,13 +196,6 @@ function edgeDetect(source) {
   }
   if (s.includes("obscura") || s.includes("azurevm") || s.includes("clyde")) {
     return { name: "Obscura / AzureVM Protection", kind: "obscura", confidence: 92 };
-  }
-  if (s.includes("luraph") || s.includes("lph_")) {
-    let ver = "v15";
-    if (s.includes("14.9")) ver = "v14.9";
-    else if (s.includes("14.8")) ver = "v14.8";
-    else if (s.includes("14.7")) ver = "v14.7";
-    return { name: `Luraph ${ver}`, kind: "luraph", confidence: 95 };
   }
   if (s.includes("ironbrew")) {
     return { name: "IronBrew 2 / Legacy", kind: "ib2", confidence: 85 };
@@ -717,6 +721,53 @@ export default {
             }), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
           }
 
+          // FULL ENGINE MODE: defer, dump on the backend, PATCH the result file.
+          if (backendUrls(env).length > 0) {
+            ctx.waitUntil((async () => {
+              const bres = await callReverserBackend(env, "/api/reverser/dump", { source }, 25000);
+              if (bres.ok && bres.data.source) {
+                const det = bres.data.detection;
+                const outFilename = `dump_${(filename || "script.lua").replace(/\.lua$/i, "")}.txt`;
+                const embed = {
+                  title: "📦 PrimeZ R.E.L — Bytecode & Constant Dump Complete",
+                  description: `Target: \`${filename}\`\nDumped on the **full engine backend**. Output file attached below.`,
+                  color: 0x00D2FF,
+                  fields: [
+                    { name: "Detected Obfuscator", value: `**${(det && det.name) || "Unknown"}**`, inline: true },
+                    { name: "Mode", value: "`full_engine_backend`", inline: true },
+                    { name: "Dump File Size", value: `\`${bres.data.source.length.toLocaleString()} bytes\``, inline: true }
+                  ],
+                  footer: { text: "PrimeZ R.E.L Full Engine Backend" }
+                };
+                await patchFollowupFile(interaction, embed, bres.data.source, outFilename);
+                return;
+              }
+              // Backend unreachable → edge dump fallback (honestly labeled)
+              const { text, dump, det } = formatDumpFile(source, filename);
+              const outFilename = `dump_${filename.replace(/\.lua$/i, "")}.txt`;
+              const constPreview = dump.string_constants.length > 0
+                ? dump.string_constants.slice(0, 8).map((c, i) => `\`[${i}]\` ${c.substring(0, 40)}`).join("\n")
+                : "_No clear string constants extracted_";
+              const embed = {
+                title: "📦 PrimeZ R.E.L — Edge Dump (Backend Unreachable)",
+                description: `Target: \`${filename}\`\nThe engine backend did not respond, so this is the **edge dumper** (string/constant pool only).`,
+                color: 0xFFA500,
+                fields: [
+                  { name: "Detected Obfuscator", value: `**${det.name}** (\`${det.kind}\`)`, inline: true },
+                  { name: "String Constants", value: `\`${dump.string_constants_count} found\``, inline: true },
+                  { name: "Dump File Size", value: `\`${text.length.toLocaleString()} bytes\``, inline: true },
+                  { name: "Constants Sample Preview", value: constPreview.substring(0, 1000) }
+                ],
+                footer: { text: "PrimeZ R.E.L • Edge Fallback" }
+              };
+              await patchFollowupFile(interaction, embed, text, outFilename);
+            })());
+            return new Response(JSON.stringify({ type: 5 }), {
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+            });
+          }
+
+          // EDGE-ONLY MODE: edge dumper, honestly labeled.
           const { text, dump, det } = formatDumpFile(source, filename);
           const outFilename = `dump_${filename.replace(/\.lua$/i, "")}.txt`;
 
@@ -725,8 +776,8 @@ export default {
             : "_No clear string constants extracted_";
 
           const embed = {
-            title: "📦 PrimeZ R.E.L — Bytecode & Constant Dump Complete",
-            description: `Target: \`${filename}\`\nOutput file attached below.`,
+            title: "📦 PrimeZ R.E.L — Edge Dump (Real Engines Not Connected)",
+            description: `Target: \`${filename}\`\nNo engine backend is configured — this is the **edge dumper** (string/constant pool only).`,
             color: 0x00D2FF,
             fields: [
               { name: "Detected Obfuscator", value: `**${det.name}** (\`${det.kind}\`)`, inline: true },
@@ -734,7 +785,7 @@ export default {
               { name: "Dump File Size", value: `\`${text.length.toLocaleString()} bytes\``, inline: true },
               { name: "Constants Sample Preview", value: constPreview.substring(0, 1000) }
             ],
-            footer: { text: "PrimeZ R.E.L Edge Dumper • 24/7" }
+            footer: { text: "PrimeZ R.E.L Edge Dumper • set REVERSER_BACKEND_URL for full dumps" }
           };
 
           return makeDiscordFileResponse(embed, text, outFilename);
