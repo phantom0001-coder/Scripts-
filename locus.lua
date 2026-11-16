@@ -1,8 +1,10 @@
 --[[ =========================================================================
- LOCUS v2.1.2 - behavior audit tool for Vykus / PolSec-style protections
+ LOCUS v2.2.0 - behavior audit tool for Vykus / PolSec-style protections
 ============================================================================
 (formerly ENV-LOGGER v1.0; dump folder renamed envlog/ -> locus/)
 (v2.1: GUI launcher - enter the target in the GUI, press EXECUTE AUDIT)
+(v2.2: env inventory of the executor API surface; hookfunction-based
+       game.HttpGet/HttpPost + HttpService dot-call fallback hooks)
 
 Runs a protected script (or its loader) inside an instrumented environment
 and records everything it touches:
@@ -12,6 +14,14 @@ and records everything it touches:
   * HTTP: request, http.request, syn.request, http.get/post,
     game:HttpGet/HttpGetAsync/HttpPost/HttpPostAsync (via __namecall hook)
     ->  the TRUE url + body, even if the Loader hides it behind layers
+  * HTTP fallback (v2.2): on executors without a working __namecall hook,
+    or for dot-call coverage alongside it, game.HttpGet/HttpPost and
+    HttpService:GetAsync/PostAsync are hooked directly via hookfunction;
+    the achieved mode (namecall / hookfunction / none) is in the summary
+  * env inventory (v2.2): the executor's API surface - the "environment
+    library" (getgenv/getrenv, hooking APIs, file APIs, debug-library
+    shape, crypt/hash APIs, syn/http tables) - is probed and reported in
+    the banner and the summary, and dumped to _env.txt
   * remote calls: FireServer / InvokeServer logged with the remote path
     and a preview of the first argument (via __namecall hook)
   * leak scanner: every dumped source is auto-scanned for urls, discord
@@ -57,7 +67,9 @@ READING THE RESULTS (security audit)
     is the baseline attack your VM mode should survive better.
 
 Honest residuals (what this harness does not catch):
-  - game.HttpGet(url) dot-calls (no colon) bypass the __namecall hook.
+  - game.HttpGet(url) dot-calls (no colon) bypass the __namecall hook; they
+    ARE seen when hookfunction is available (v2.2 dot-call fallback hooks),
+    otherwise they remain invisible.
   - Remotes are observed, never stubbed: OFFLINE blocks HTTP, not game
     interaction (a FireServer still fires for real).
   - Continuations spawned via task.delay/spawn may finish after the summary.
@@ -120,6 +132,10 @@ local FALLBACK = {
   http_request = http_request, writefile = writefile, readfile = readfile,
   isfile = isfile, isfolder = isfolder, makefolder = makefolder,
   delfile = delfile, delfolder = delfolder, listfiles = listfiles,
+  getrenv = getrenv, hookfunction = hookfunction, setreadonly = setreadonly,
+  checkcaller = checkcaller, cloneref = cloneref,
+  getcallingscript = getcallingscript, gethui = gethui,
+  getloadedmodules = getloadedmodules, queue_on_teleport = queue_on_teleport,
 }
 
 local PLACEHOLDER = [[
@@ -172,6 +188,7 @@ end
 --   cfg.CAPTURE_REMOTES  log FireServer/InvokeServer (default true)
 --   cfg.PRINT_SOURCES    print dumped sources (default true)
 --   cfg.PRINT_LIMIT      console chars per source (default 20000)
+--   cfg.ENV_INVENTORY    probe the executor API surface (default true)
 --   cfg.onLog            function(line) for GUI live output
 
 local function runAudit(cfg)
@@ -186,7 +203,73 @@ local function runAudit(cfg)
   local CAPTURE_REMOTES = cfg.CAPTURE_REMOTES ~= false
   local PRINT_SOURCES   = cfg.PRINT_SOURCES ~= false
   local PRINT_LIMIT     = (realType(cfg.PRINT_LIMIT) == "number") and cfg.PRINT_LIMIT or 20000
+  local ENV_INVENTORY   = cfg.ENV_INVENTORY ~= false
   local onLog           = (realType(cfg.onLog) == "function") and cfg.onLog or nil
+
+  -- --------------------------- env inventory -------------------------------
+  -- v2.2: probe the executor's API surface (the "environment library") and
+  -- report it. Feature benchmark: the Sp3arParvus env-analysis suite;
+  -- degradation patterns: the Hydroxide Compatibility Edition. Bare global
+  -- reads (nil when absent) keep this portable across every executor.
+
+  local envPresent, envAbsent, envLines = {}, {}, {}
+
+  local function envInventory()
+    -- bare-identifier reference table: absent globals read as nil, no error
+    local INV_ORDER = {
+      "getgenv", "getrenv", "getrawmetatable", "setrawmetatable", "setreadonly",
+      "checkcaller", "cloneref", "getcallingscript", "getloadedmodules",
+      "gethui", "identifyexecutor", "queue_on_teleport",
+      "hookmetamethod", "hookfunction", "newcclosure", "getnamecallmethod",
+      "request", "http_request",
+      "writefile", "readfile", "isfile", "isfolder", "makefolder",
+      "delfile", "delfolder", "listfiles",
+    }
+    local INV = {
+      getgenv = getgenv, getrenv = getrenv,
+      getrawmetatable = getrawmetatable, setrawmetatable = setrawmetatable,
+      setreadonly = setreadonly, checkcaller = checkcaller,
+      cloneref = cloneref, getcallingscript = getcallingscript,
+      getloadedmodules = getloadedmodules, gethui = gethui,
+      identifyexecutor = identifyexecutor,
+      queue_on_teleport = queue_on_teleport,
+      hookmetamethod = hookmetamethod, hookfunction = hookfunction,
+      newcclosure = newcclosure, getnamecallmethod = getnamecallmethod,
+      request = request, http_request = http_request,
+      writefile = writefile, readfile = readfile, isfile = isfile,
+      isfolder = isfolder, makefolder = makefolder, delfile = delfile,
+      delfolder = delfolder, listfiles = listfiles,
+    }
+    local function mark(name, ok)
+      if ok then envPresent[name] = true else tinsert(envAbsent, name) end
+      local lbl = name
+      if #lbl < 24 then lbl = lbl .. string.rep(" ", 24 - #lbl) end
+      tinsert(envLines, "  " .. lbl .. (ok and "yes" or "no"))
+    end
+    for _, name in ipairs_(INV_ORDER) do
+      mark(name, realType(INV[name]) == "function")
+    end
+    -- table-shaped surfaces
+    local synT, httpT, cryptT, dbgT = syn, http, crypt, debug
+    mark("syn", realType(synT) == "table")
+    mark("http", realType(httpT) == "table")
+    mark("crypt", realType(cryptT) == "table")
+    mark("bit32", realType(bit32) == "table")
+    mark("debug", realType(dbgT) == "table")
+    if realType(dbgT) == "table" then
+      for _, dn in ipairs_({ "getinfo", "getlocal", "getupvalue", "getupvalues",
+        "getconstants", "getregistry" }) do
+        mark("debug." .. dn, realType(rawget_(dbgT, dn)) == "function")
+      end
+    end
+    if realType(cryptT) == "table" then
+      for _, cn in ipairs_({ "hash", "encrypt", "decrypt", "base64encode" }) do
+        mark("crypt." .. cn, realType(rawget_(cryptT, cn)) == "function")
+      end
+    end
+  end
+
+  if ENV_INVENTORY then envInventory() end
 
   -- print to console AND to the GUI log when one is attached
   local function P(...)
@@ -202,7 +285,7 @@ local function runAudit(cfg)
   -- ------------------------------- banner ----------------------------------
 
   P("========================================================================")
-  P(" LOCUS v2.1.2 - behavior audit tool for Vykus / PolSec-style protections")
+  P(" LOCUS v2.2.0 - behavior audit tool for Vykus / PolSec-style protections")
   P("========================================================================")
   P("  * every global read / write  ->  ENV[read] key (count) / ENV[write]")
   P("  * loadstring / load calls    ->  full source dumped to a file")
@@ -214,7 +297,12 @@ local function runAudit(cfg)
   P(" host    : " .. (EXEC and "Roblox executor" or "Lua CLI"))
   P(" files   : " .. ((HAS_LFS and ("writefile -> workspace/" .. LOG_DIR .. "/"))
     or ((HAS_IO and ("io.open -> ./" .. LOG_DIR .. "/")) or "NO FILE API (dumps disabled)")))
-  P(" namecall: " .. ((EXEC and CAN_HOOK) and "hook available" or "not available"))
+  P(" namecall: " .. ((EXEC and CAN_HOOK) and "hook available" or "not available")
+    .. " | hookfunction: " .. (realType(hookfunction) == "function" and "available" or "not available"))
+  local invYes, invTotal = 0, #envLines
+  for _ in pairs_(envPresent) do invYes = invYes + 1 end
+  P(" env inv : " .. invYes .. "/" .. invTotal .. " executor APIs present"
+    .. (ENV_INVENTORY and "  (dumped to _env.txt)" or "  (disabled)"))
   P(" executor : " .. ((realType(identifyexecutor) == "function")
     and identifyexecutor() or "unknown"))
   P(" extras  : leak scan = " .. tostring_(SCAN_LEAKS)
@@ -566,6 +654,7 @@ local function runAudit(cfg)
   -- ------------------------- __namecall hook (executor) --------------------
 
   local namecallHooked = false
+  local httpHookMode = "none"
 
   local function installNamecallHook()
     if not (EXEC and CAN_HOOK) then return end
@@ -612,6 +701,43 @@ local function runAudit(cfg)
     namecallHooked = pcall_(hookmetamethod, game, "__namecall", hookFn)
   end
 
+  -- v2.2 dot-call fallback: hook the HttpGet/HttpPost / HttpService Get/Post
+  -- method functions DIRECTLY via hookfunction. Covers game.HttpGet(game, url)
+  -- dot-calls, which bypass __namecall, and provides partial HTTP visibility
+  -- on executors whose builds lack hookmetamethod entirely (the degradation
+  -- pattern the Hydroxide Compatibility Edition uses for low-API executors).
+  -- All attempts are pcall-guarded; a failed hook just lowers the mode.
+  local function installDotCallHooks()
+    if not EXEC or realType(hookfunction) ~= "function" then return false end
+    local HTTP_SERVICE
+    pcall_(function() HTTP_SERVICE = game:GetService("HttpService") end)
+    local targets = {
+      { obj = game, key = "HttpGet",  label = "game.HttpGet"  },
+      { obj = game, key = "HttpPost", label = "game.HttpPost" },
+    }
+    if HTTP_SERVICE then
+      tinsert(targets, { obj = HTTP_SERVICE, key = "GetAsync",  label = "HttpService.GetAsync"  })
+      tinsert(targets, { obj = HTTP_SERVICE, key = "PostAsync", label = "HttpService.PostAsync" })
+    end
+    local hookedAny = false
+    for _, tg in ipairs_(targets) do
+      pcall_(function()
+        local orig = tg.obj[tg.key]
+        if realType(orig) ~= "function" then return end
+        local isPost = (tg.key == "HttpPost" or tg.key == "PostAsync")
+        local original
+        local function wrapped(url, body, ...)
+          noteHttp(tg.label, url, isPost and body or nil)
+          if OFFLINE then return OFFLINE_BODY end
+          return original(url, body, ...)
+        end
+        original = hookfunction(orig, wrapped)
+        hookedAny = true
+      end)
+    end
+    return hookedAny
+  end
+
   -- ------------------------------- run target ------------------------------
 
   local target, terror
@@ -633,6 +759,14 @@ local function runAudit(cfg)
     scanSource(target, "target.lua")
     printSource("target.lua", target)
     installNamecallHook()
+    local dotHooked = installDotCallHooks()
+    if namecallHooked and dotHooked then
+      httpHookMode = "namecall + hookfunction (dot-calls covered)"
+    elseif namecallHooked then
+      httpHookMode = "namecall"
+    elseif dotHooked then
+      httpHookMode = "hookfunction (dot-calls covered)"
+    end
     local f, cerr = compileInto(target, "=locus:target")
     if not f then
       runError = "compile failed: " .. tostring_(cerr)
@@ -674,9 +808,9 @@ local function runAudit(cfg)
     and "PARTIAL - some chunks ran on raw globals (see residuals)"
     or "sandboxed (all stages ran through the proxy env)"))
   if EXEC then
-    emit("namecall    : " .. (namecallHooked
-      and "hooked (game:HttpGet/HttpGetAsync/HttpPost/HttpPostAsync, remotes, HttpService)"
-      or "NOT hooked (game:* http and remote calls will NOT be seen)"))
+    emit("http hook   : " .. httpHookMode ..
+      (httpHookMode == "none" and
+        " (game:* http and remote calls will NOT be seen)" or ""))
   end
   emit("run         : " .. (runError and ("ERROR - " .. runError)
     or ((realType(target) == "string" and #target > 0) and "completed" or "no target")))
@@ -737,6 +871,17 @@ local function runAudit(cfg)
   end
 
   emit("")
+  local invYes2 = 0
+  for _ in pairs_(envPresent) do invYes2 = invYes2 + 1 end
+  emit(format("-- env inventory: %d/%d executor APIs present ----------------------------------",
+    invYes2, #envLines))
+  if ENV_INVENTORY and #envLines > 0 then
+    for _, l in ipairs_(envLines) do emit(l) end
+  else
+    emit("  (disabled by config)")
+  end
+
+  emit("")
   emit(format("-- files written to %s/ -----------------------------------------------------------", LOG_DIR))
   for _, fw in ipairs_(filesWritten) do
     emit(format("  %s  (%d bytes)%s", fw.path, fw.size, fw.ok and "" or "  [WRITE FAILED]"))
@@ -759,6 +904,9 @@ local function runAudit(cfg)
   if #remoteEvents > 0 then
     dumpFile("_remotes.txt", tconcat(remoteEvents, "\n"))
   end
+  if ENV_INVENTORY and #envLines > 0 then
+    dumpFile("_env.txt", tconcat(envLines, "\n"))
+  end
 
   P("")
   P("[locus] audit complete. Sources, http transcript and summary are in "
@@ -777,6 +925,9 @@ local function runAudit(cfg)
     httpEvents   = httpEvents,
     remoteEvents = remoteEvents,
     leakHits     = leakHits,
+    httpHook     = httpHookMode,
+    envPresent   = envPresent,
+    envAbsent    = envAbsent,
     offline      = OFFLINE,
     logDir       = LOG_DIR,
   }
@@ -848,7 +999,7 @@ local function buildGUI(runAudit)
   local bar = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C_PANEL, BorderSizePixel = 0 }, root)
   mk("TextLabel", {
     Size = UDim2.new(1, -44, 1, 0), Position = UDim2.new(0, 10, 0, 0),
-    BackgroundTransparency = 1, Text = "LOCUS v2.1.2 - audit launcher",
+    BackgroundTransparency = 1, Text = "LOCUS v2.2.0 - audit launcher",
     TextColor3 = C_ACC, Font = FONT, TextSize = 16, TextXAlignment = EnumT.TextXAlignment.Left,
   }, bar)
   mk("TextButton", {
@@ -1026,7 +1177,7 @@ end
 
 -- ================================ ENTRY ====================================
 
-realPrint("[locus] loading LOCUS v2.1.2 ...")
+realPrint("[locus] loading LOCUS v2.2.0 ...")
 
 if EXEC then
   local okG, gerr = pcall_(buildGUI, runAudit)
